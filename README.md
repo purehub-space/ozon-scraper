@@ -27,10 +27,12 @@ pip3 install --user curl_cffi websocket-client
 
 | 脚本 | 用途 | 输入 | 吞吐 |
 |---|---|---|---|
-| `ozon_http.py` | 店铺 / 类目全量列表 | seller 或 category URL | ~34 SKU/s |
-| `ozon_search.py` | 关键词全量（自动转类目 + 预热） | 关键词或 /search/ URL | ~37 SKU/s |
-| `ozon_image.py` | 以图搜同款 | 本地图片 或 图片 URL | ~63 SKU/s |
-| `ozon_detail.py` | SKU 详情 + 评论 | skus.txt | ~4.4 SKU/s |
+| `ozon_http.py` | 店铺 / 类目全量列表 | seller 或 category URL | 34.5 → **193 SKU/s** |
+| `ozon_search.py` | 关键词全量（自动转类目 + 预热） | 关键词或 /search/ URL | 37.5 → **179 SKU/s** |
+| `ozon_image.py` | 以图搜同款 | 本地图片 或 图片 URL | 63 → **211 SKU/s** |
+| `ozon_detail.py` | SKU 详情 + 评论 | skus.txt | 4.4 → **18.6 SKU/s** |
+
+（后者为加 `--pool 4` 的实测值；四个脚本都支持 `--pool N` 和 `--browser chrome`）
 
 ## 快速开始
 

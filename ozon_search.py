@@ -31,6 +31,11 @@ except ImportError:
     print("需要: pip3 install --user curl_cffi websocket-client")
     raise SystemExit(1)
 
+try:
+    from pool_client import PoolClient, CONCURRENCY_PER_COOKIE
+except ImportError:
+    PoolClient = None
+
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CACHE = os.path.expanduser("~/.cache/ozon-search")
 VOID_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -229,7 +234,9 @@ def main():
     ap.add_argument("--category", help="已经是 category URL，跳过预热")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pages", default="1-0", help="start-end；end=0 抓到空页")
-    ap.add_argument("--threads", type=int, default=20)
+    ap.add_argument("--threads", type=int, default=0, help="0 = 自动（池大小 × 16，单 cookie 时 20）")
+    ap.add_argument("--pool", type=int, default=0, help="用 N 个 headless 会话轮换（>=2 提速数倍）")
+    ap.add_argument("--browser", help="从本机浏览器直接读 cookie（chrome/edge/...），零窗口零预热")
     ap.add_argument("--force-warm", action="store_true", help="忽略缓存，强制重新预热")
     ap.add_argument("--silent", action="store_true", default=True, help="预热窗口移出屏幕（默认开）")
     a = ap.parse_args()
@@ -260,7 +267,16 @@ def main():
         else:
             entry = a.url if a.url.startswith("http") else "https://www.ozon.ru" + a.url
             key = "url:" + entry
-        creds = None if a.force_warm else load_cache(key)
+        creds = None
+        if a.browser:
+            try:
+                from cookie_from_browser import creds_from_browser
+                creds = creds_from_browser(a.browser)
+                if creds:
+                    print(f"[+] 从 {a.browser} 读到 cookie（{creds['n_cookies']} 个，零窗口）")
+            except ImportError:
+                print("[!] 缺 browser_cookie3：pip3 install --user browser-cookie3")
+        creds = creds or (None if a.force_warm else load_cache(key))
         if creds:
             log({"ev": "cache-hit", "age": int(time.time() - creds["at"]), "final": creds["final_url"]})
         else:
@@ -289,6 +305,17 @@ def main():
         return "https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url=" + urllib.parse.quote(path, safe="")
 
     H = headers(creds.get("ua"), creds.get("cookie"))
+
+    pc = None
+    if a.pool >= 2 and PoolClient:
+        pc = PoolClient(n=a.pool)
+        H = pc.headers_for(0)
+        if a.threads <= 0:
+            a.threads = pc.recommended_threads()
+        print(f"[+] cookie 池：{len(pc.pool)} 会话 → {a.threads} 线程")
+    else:
+        if a.threads <= 0:
+            a.threads = 20
     skus, stat = {}, {"ok": 0, "fail": 0, "p403": 0, "empty": 0}
     stop = threading.Event()
     rewarm_lock = threading.Lock()
@@ -317,7 +344,7 @@ def main():
         url = build(n)
         for attempt in range(2):
             try:
-                r = cr.get(url, headers=H, impersonate="chrome", timeout=45)
+                r = pc.get(url, timeout=45) if pc else cr.get(url, headers=H, impersonate="chrome", timeout=45)
                 if r.status_code == 403:
                     with lk:
                         stat["p403"] += 1
@@ -388,6 +415,8 @@ def main():
         prices.sort()
         print(f"price {prices[0]} ~ {prices[-1]} ₽, median {prices[len(prices)//2]} ₽")
     print(f"-> {out}/skus.txt")
+    if pc:
+        print(f"[pool] {pc.stats()}")
     logf.close()
 
 

@@ -21,6 +21,11 @@ from concurrent.futures import ThreadPoolExecutor
 from curl_cffi import requests as cr
 
 CACHE = os.path.expanduser("~/.cache/ozon-search")
+try:
+    from pool_client import PoolClient, CONCURRENCY_PER_COOKIE
+except ImportError:
+    PoolClient = None
+
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 VOID_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
            "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
@@ -232,7 +237,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skus", required=True, help="skus.txt 或逗号分隔的 SKU")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--threads", type=int, default=24)
+    ap.add_argument("--threads", type=int, default=0, help="0 = 自动（池大小 × 16，单 cookie 时 24）")
+    ap.add_argument("--pool", type=int, default=0, help="用 N 个 headless 会话轮换")
+    ap.add_argument("--browser", help="从本机浏览器直接读 cookie（零窗口零预热）")
     ap.add_argument("--pdp2", action="store_true", default=True)
     ap.add_argument("--no-pdp2", dest="pdp2", action="store_false")
     ap.add_argument("--reviews", type=int, default=0, help="评论页数（30 条/页），0=不抓")
@@ -247,7 +254,16 @@ def main():
             logf.write(json.dumps({"t": time.strftime("%H:%M:%S"), **o}, ensure_ascii=False) + "\n")
             logf.flush()
 
-    creds = load_creds()
+    creds = None
+    if a.browser:
+        try:
+            from cookie_from_browser import creds_from_browser
+            creds = creds_from_browser(a.browser)
+            if creds:
+                print(f"[+] 从 {a.browser} 读到 cookie（{creds['n_cookies']} 个，零窗口）")
+        except ImportError:
+            print("[!] 缺 browser_cookie3：pip3 install --user browser-cookie3")
+    creds = creds or load_creds()
     if not creds:
         print("[*] 无缓存 cookie，静默预热一次（约 13 秒）...")
         creds = warm_creds()
@@ -266,6 +282,15 @@ def main():
         "cookie": creds["cookie"],
     }
 
+    pc = None
+    if a.pool >= 2 and PoolClient:
+        pc = PoolClient(n=a.pool)
+        if a.threads <= 0:
+            a.threads = pc.recommended_threads()
+        print(f"[+] cookie 池：{len(pc.pool)} 会话 → {a.threads} 线程")
+    elif a.threads <= 0:
+        a.threads = 24
+
     if os.path.exists(a.skus) and os.path.getsize(a.skus) > 0:
         skus = [l.strip() for l in open(a.skus) if l.strip() and not l.startswith("#")]
     else:
@@ -279,7 +304,7 @@ def main():
         u = API + urllib.parse.quote(path, safe="")
         for _ in range(2):
             try:
-                r = cr.get(u, headers=H, impersonate="chrome", timeout=45)
+                r = pc.get(u, timeout=45) if pc else cr.get(u, headers=H, impersonate="chrome", timeout=45)
                 if r.status_code == 403:
                     with _lock:
                         stat["r403"] += 1
@@ -349,6 +374,8 @@ def main():
     if wall > 0:
         print(f"throughput {stat['ok']/wall:.2f} SKU/s")
     print(f"-> {out}/details.jsonl")
+    if pc:
+        print(f"[pool] {pc.stats()}")
     logf.close()
 
 
