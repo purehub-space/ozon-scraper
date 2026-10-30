@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+
+# 运行时产物
+out*/
+*.csv
+*.jsonl
+
+# 本地 cookie（真实凭据，永不提交）
+*.cookie
+cookies*.json
+
+# 编辑器
+.vscode/
+.idea/
