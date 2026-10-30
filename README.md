@@ -71,6 +71,39 @@ python3 to-csv.py out_detail
 bash examples/run_all.sh "сквиш"
 ```
 
+## 三种拿 cookie 的方式
+
+| 方式 | 开窗口 | 耗时 | 会话数 | 吞吐 |
+|---|---|---|---|---|
+| **`--browser chrome`**（读现有浏览器） | **0（完全后台）** | ~10 s（读+校验） | 1 | 62~81 SKU/s |
+| `--pool 4`（预热无痕） | 4 个（屏幕外看不见） | 8 s | 4 | **190~247 SKU/s** |
+| 不加（无 cookie） | 0 | 0 | 0 | 只能抓 page 2+ |
+
+### 方式一：直接读本机浏览器（零窗口，推荐日常用）
+
+```bash
+python3 cookie_from_browser.py --check          # 看哪个浏览器有可用 cookie
+python3 cookie_from_browser.py                  # 读 Chrome + 校验 + 存缓存
+
+# 之后采集直接加 --browser
+python3 ozon_image.py --url "<图片URL>" --out out_img --browser chrome
+python3 ozon_http.py  --url "<店铺URL>"  --out out_shop --browser chrome
+```
+
+原理：Chrome 的 cookie 存在本地 SQLite（Keychain 加密），`browser_cookie3` 读出来解密，
+里面就有 Ozon 要的 `abt_data` + `__Secure-ETC`。**不启动任何浏览器进程。**
+
+前提：这个浏览器访问过 `www.ozon.ru`（走过一次 antibot challenge）。
+
+实测你机器上 Chrome 有 42 个 ozon cookie，校验直通：
+```
+seller 200 / pdp 200 / list p1 200 / list p2 200 / 图搜结果 200
+```
+
+### 方式二：预热无痕会话池（要吞吐时用）
+
+见下一节。
+
 ## 多 cookie 池（提速 4 倍）
 
 单个 cookie 的并发甜点约 24 线程（66 SKU/s），超过 40 线程直接崩（4 SKU/s）。

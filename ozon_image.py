@@ -192,6 +192,7 @@ def main():
     ap.add_argument("--pages", default="1-100", help="默认 100 页（图搜常见上限，page 500 为空）")
     ap.add_argument("--threads", type=int, default=0, help="0 = 自动（池大小 × 16）")
     ap.add_argument("--pool", type=int, default=0, help="用 N 个 cookie 轮换（0=单一 cookie，N>=2 提速）")
+    ap.add_argument("--browser", help="从本机浏览器直接读 cookie（chrome/edge/...），零窗口")
     ap.add_argument("--max-mb", type=float, default=4.0)
     a = ap.parse_args()
 
@@ -211,7 +212,16 @@ def main():
             print(f"[!] 图片 {len(img)/1024/1024:.1f}MB 超过 {a.max_mb}MB，Ozon 会拒")
             raise SystemExit(2)
 
-    creds = load_creds() or warm_creds()
+    creds = None
+    if a.browser:
+        try:
+            from cookie_from_browser import creds_from_browser
+            creds = creds_from_browser(a.browser)
+            if creds:
+                print(f"[+] 从 {a.browser} 读到 cookie（{creds['n_cookies']} 个，零窗口）")
+        except ImportError:
+            print("[!] 缺 browser_cookie3：pip3 install --user browser-cookie3")
+    creds = creds or load_creds() or warm_creds()
     if not creds:
         print("[!] 拿不到 cookie（预热失败）")
         raise SystemExit(2)

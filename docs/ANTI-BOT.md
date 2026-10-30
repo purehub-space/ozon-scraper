@@ -95,12 +95,28 @@ challenge 绑的不只是 cookie，还有会话内存态/指纹绑定。
 
 实测 5.0~5.5 秒完成。
 
-### ⚠️ headless 不行
+### 💡 更省事的方案：直接读本机浏览器
 
-| 模式 | 结果 |
-|---|---|
-| `--headless=new` | 页面 title = **"Похоже, нет соединения"**，cookie 只有 3 个，之后全 403 |
-| headful + 窗口移出屏幕 | 正常，8 个 cookie，全 200 |
+`cookie_from_browser.py` 用 `browser_cookie3` 从 Chrome/Edge/Brave 的 Cookie 数据库里
+解密出 `abt_data`（macOS 用 Keychain 密钥），**不启动浏览器进程**，零窗口零等待。
+
+实测本机 Chrome 42 个 ozon cookie，直接可用：seller/pdp/list p1/图搜 全 200。
+
+前提：这个浏览器访问过 `www.ozon.ru`。
+
+### ⚠️ headless 不行（根因已定位）
+
+| 模式 | 页面 | 拿到的 cookie 能否用于 API |
+|---|---|---|
+| `--headless=new`（默认 UA） | ❌ title = "Похоже, нет соединения" | — |
+| `--headless=new --user-agent=<真实UA>` | ✅ 页面正常打开，cookie 78 字节 | ❌ **API 仍 403** |
+| headful + 窗口移出屏幕 | ✅ | ✅ 200 |
+
+**根因**：headless 的 UA 里带 `HeadlessChrome`，Ozon 直接拒。把 UA 改成正常的之后，
+页面能开、cookie 也能拿到（9 个，含 `abt_data`），但**用这份 cookie 从外部打 API 仍然 403** ——
+说明 challenge 通过时签发的 `abt_data` 还绑了更深的指纹（WebGL/字体等 headless 与 headful 的差异）。
+
+结论：**headless 拿的 cookie 是废的**，只能 headful（哪怕窗口在屏幕外），或者直接读现有浏览器的 cookie。
 
 所以「静默」只能靠把窗口丢到屏幕外，不能靠 headless。
 

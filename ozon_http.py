@@ -236,6 +236,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=45)
     ap.add_argument("--no-cookie", action="store_true", help="不带 cookie（page 1 会 403，但省掉预热）")
     ap.add_argument("--pool", type=int, default=0, help="用 N 个 cookie 轮换（0=单一 cookie；>=2 提速数倍）")
+    ap.add_argument("--browser", help="从本机浏览器直接读 cookie（chrome/edge/brave/safari），零窗口零预热")
     a = ap.parse_args()
 
     out = os.path.abspath(a.out)
@@ -303,7 +304,19 @@ def main():
         with _lock:
             stat["fail"] += 1
 
-    creds = None if a.no_cookie else load_creds()
+    creds = None
+    if a.browser:
+        try:
+            from cookie_from_browser import creds_from_browser
+            creds = creds_from_browser(a.browser)
+            if creds:
+                print(f"[+] 从 {a.browser} 读到 cookie（{creds['n_cookies']} 个，零窗口）")
+            else:
+                print(f"[!] {a.browser} 里没有可用的 ozon cookie，回退到缓存/预热")
+        except ImportError:
+            print("[!] 缺 browser_cookie3：pip3 install --user browser-cookie3")
+    if not creds and not a.no_cookie:
+        creds = load_creds()
     if not creds and not a.no_cookie:
         print("[*] 无可用 cookie，静默预热一次（约 13 秒，page 1 需要它）...")
         creds = warm_creds()
