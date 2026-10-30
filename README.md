@@ -1,5 +1,16 @@
 # Ozon 买家端采集器
 
+<p>
+  <img src="https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white" alt="python">
+  <img src="https://img.shields.io/badge/TLS-curl__cffi%20chrome%20impersonate-success" alt="tls">
+  <img src="https://img.shields.io/badge/browser-not%20required-brightgreen" alt="no browser">
+  <img src="https://img.shields.io/badge/RAM-~50MB-lightgrey" alt="memory">
+  <img src="https://img.shields.io/badge/throughput-up%20to%2063%20SKU%2Fs-orange" alt="throughput">
+  <img src="https://img.shields.io/badge/coverage-store%20%7C%20keyword%20%7C%20image%20%7C%20detail-blueviolet" alt="coverage">
+</p>
+
+![demo](assets/demo.gif)
+
 免登录抓取 Ozon 前台：店铺、类目、关键词搜索、以图搜同款、SKU 详情。
 
 纯 Python HTTP（curl_cffi 伪装 TLS），内存 ~50MB，不需要常驻浏览器。
