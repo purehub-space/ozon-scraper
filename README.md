@@ -71,6 +71,36 @@ python3 to-csv.py out_detail
 bash examples/run_all.sh "сквиш"
 ```
 
+## 多 cookie 池（提速 4 倍）
+
+单个 cookie 的并发甜点约 24 线程（66 SKU/s），超过 40 线程直接崩（4 SKU/s）。
+但 **N 个独立 cookie 各自限速**，吞吐近似线性叠加：
+
+```bash
+# 一次预热 4 个无痕会话（窗口都在屏幕外，8 秒）
+python3 prepare_pool.py --n 4
+
+# 采集时加 --pool 4，线程数自动变成 4×16=64
+python3 ozon_image.py --url "<图片URL>" --out out_img --pool 4
+python3 ozon_http.py  --url "<店铺或类目URL>" --out out_shop --pool 4
+```
+
+实测（4 cookie × 16 并发 = 64 线程）：
+
+| 场景 | 单 cookie | 4 cookie 池 |
+|---|---|---|
+| 图搜 60 页 | 63 SKU/s | **236.9 SKU/s** |
+| 类目 100 页 | 34.5 SKU/s | **192.6 SKU/s** |
+| 类目 300 页（新鲜池） | — | **247.6 SKU/s**，96% 成功，0 个 403 |
+
+每个 cookie 大约 100~150 页的新鲜额度，用完后转 403；`pool_client.py` 会在 403 累积到 30 次时
+**自动重新预热补池**（约 8 秒），采集不中断。
+
+```bash
+python3 prepare_pool.py --list      # 看池状态（数量 / 年龄）
+python3 prepare_pool.py --n 4 --force   # 强制重来
+```
+
 ## 必读
 
 - **`docs/ANTI-BOT.md`** — 为什么必须用 curl_cffi、cookie 从哪来、预热机制

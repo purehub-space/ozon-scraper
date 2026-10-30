@@ -141,6 +141,11 @@ def build_headers(creds=None):
         h["cookie"] = creds["cookie"]
     return h
 
+try:
+    from pool_client import PoolClient, CONCURRENCY_PER_COOKIE
+except ImportError:
+    PoolClient = None
+
 STOP = threading.Event()
 _lock = threading.Lock()
 
@@ -230,6 +235,7 @@ def main():
     ap.add_argument("--retry", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=45)
     ap.add_argument("--no-cookie", action="store_true", help="不带 cookie（page 1 会 403，但省掉预热）")
+    ap.add_argument("--pool", type=int, default=0, help="用 N 个 cookie 轮换（0=单一 cookie；>=2 提速数倍）")
     a = ap.parse_args()
 
     out = os.path.abspath(a.out)
@@ -265,7 +271,7 @@ def main():
         for attempt in range(a.retry + 1):
             t0 = time.time()
             try:
-                r = cr.get(url, headers=HEADERS, impersonate=a.impersonate, timeout=a.timeout)
+                r = pc.get(url, timeout=a.timeout) if pc else cr.get(url, headers=HEADERS, impersonate=a.impersonate, timeout=a.timeout)
                 ms = int((time.time() - t0) * 1000)
                 if r.status_code != 200:
                     log({"ev": "bad", "p": n, "s": r.status_code, "a": attempt})
@@ -303,7 +309,15 @@ def main():
         creds = warm_creds()
     HEADERS = build_headers(creds)
     if creds:
-        print(f"[+] cookie {creds.get('n_cookies')} 个")
+        print(f"[+] cookie {creds.get('n_cookies') or creds.get('n') or '?'} 个")
+
+    pc = None
+    if a.pool >= 2 and PoolClient:
+        pc = PoolClient(n=a.pool)
+        HEADERS = pc.headers_for(0)
+        if a.threads <= 16:
+            a.threads = pc.recommended_threads()
+        print(f"[+] cookie 池: {len(pc.pool)} 会话 → {a.threads} 线程")
     log({"ev": "start", "base": base_path, "from": p_from, "to": p_to, "threads": a.threads,
          "imp": a.impersonate, "cookie": bool(creds)})
     t0 = time.time()
@@ -345,6 +359,8 @@ def main():
         prices.sort()
         print(f"price {prices[0]} ~ {prices[-1]} ₽, median {prices[len(prices)//2]} ₽")
     print(f"-> {out}/skus.txt  {out}/products.jsonl")
+    if pc:
+        print(f"[pool] {pc.stats()}")
     logf.close()
 
 

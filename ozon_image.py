@@ -20,6 +20,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from curl_cffi import requests as cr, CurlMime
 
+try:
+    from pool_client import PoolClient, CONCURRENCY_PER_COOKIE
+except ImportError:
+    PoolClient = None
+
 CACHE = os.path.expanduser("~/.cache/ozon-search")
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 VOID_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -185,7 +190,8 @@ def main():
     g.add_argument("--url", help="图片 URL，直接透传给 Ozon（不下载）")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pages", default="1-100", help="默认 100 页（图搜常见上限，page 500 为空）")
-    ap.add_argument("--threads", type=int, default=6)
+    ap.add_argument("--threads", type=int, default=0, help="0 = 自动（池大小 × 16）")
+    ap.add_argument("--pool", type=int, default=0, help="用 N 个 cookie 轮换（0=单一 cookie，N>=2 提速）")
     ap.add_argument("--max-mb", type=float, default=4.0)
     a = ap.parse_args()
 
@@ -209,7 +215,7 @@ def main():
     if not creds:
         print("[!] 拿不到 cookie（预热失败）")
         raise SystemExit(2)
-    print(f"[+] cookie {creds['n_cookies']} 个")
+    print(f"[+] cookie {creds.get('n_cookies') or creds.get('n') or '?'} 个")
 
     H = {
         "accept": "application/json", "accept-language": "zh-CN,zh;q=0.9,ru;q=0.8",
@@ -219,6 +225,16 @@ def main():
         "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin",
         "user-agent": creds.get("ua") or VOID_UA, "cookie": creds["cookie"],
     }
+
+    pc = None
+    if a.pool >= 2 and PoolClient:
+        pc = PoolClient(n=a.pool)
+        H = pc.headers_for(0)
+        if a.threads <= 0:
+            a.threads = pc.recommended_threads()
+        print(f"[+] cookie 池模式：{len(pc.pool)} 会话，{a.threads} 线程")
+    elif a.threads <= 0:
+        a.threads = 6
 
     # 1) 上传
     mp = CurlMime()
@@ -234,8 +250,14 @@ def main():
     # 导致之后所有请求 hang（实测卡死在 30s 超时前的连接阶段）
     S = cr.Session(impersonate="chrome")
     try:
-        r = S.post("https://www.ozon.ru/api/composer-api.bx/_action/searchByImage",
-                   headers=UP_H, multipart=mp, timeout=90)
+        if pc:
+            r = pc.get("https://www.ozon.ru/search-by-image/", timeout=30)  # 热身
+            r = pc.post("https://www.ozon.ru/api/composer-api.bx/_action/searchByImage",
+                        multipart=mp, extra_headers={"referer": "https://www.ozon.ru/search-by-image/",
+                                                     "origin": "https://www.ozon.ru"}, timeout=90)
+        else:
+            r = S.post("https://www.ozon.ru/api/composer-api.bx/_action/searchByImage",
+                       headers=UP_H, multipart=mp, timeout=90)
     finally:
         mp.close()
     _tls.s = S   # 主线程复用上传用的同一个 Session（不要 close）
@@ -264,7 +286,7 @@ def main():
             return
         for _ in range(3):
             try:
-                r = sess().get(build(n), headers=H, timeout=25)
+                r = pc.get(build(n), timeout=25) if pc else sess().get(build(n), headers=H, timeout=25)
                 if r.status_code != 200:
                     log({"ev": "bad", "p": n, "s": r.status_code, "body": (r.text or "")[:80]})
                     time.sleep(2)
@@ -331,6 +353,8 @@ def main():
     if wall > 0 and stat["ok"]:
         print(f"throughput {stat['ok']/wall:.2f} pages/s = {stat['ok']/wall*12:.1f} SKU/s")
     print(f"-> {out}/skus.txt  {out}/products.jsonl")
+    if pc:
+        print(f"[pool] {pc.stats()}")
     logf.close()
 
 
