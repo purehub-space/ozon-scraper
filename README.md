@@ -76,7 +76,7 @@ bash examples/run_all.sh "сквиш"
 | 方式 | 开窗口 | 耗时 | 会话数 | 吞吐 |
 |---|---|---|---|---|
 | **`--browser chrome`**（读现有浏览器） | **0（完全后台）** | ~10 s（读+校验） | 1 | 62~81 SKU/s |
-| `--pool 4`（预热无痕） | 4 个（屏幕外看不见） | 8 s | 4 | **190~247 SKU/s** |
+| **`--pool 4`（预热 headless）** | **0（headless，完全无窗口）** | 8 s | 4 | **210~300 SKU/s** |
 | 不加（无 cookie） | 0 | 0 | 0 | 只能抓 page 2+ |
 
 ### 方式一：直接读本机浏览器（零窗口，推荐日常用）
@@ -118,13 +118,16 @@ python3 ozon_image.py --url "<图片URL>" --out out_img --pool 4
 python3 ozon_http.py  --url "<店铺或类目URL>" --out out_shop --pool 4
 ```
 
-实测（4 cookie × 16 并发 = 64 线程）：
+池默认用 **headless**（完全无窗口）。headless 被识别只有两个破绽：UA 带 `HeadlessChrome`、
+`screen` 默认 800×600 —— 都在 `prepare_pool.py` 里补掉了（真实 UA + `Emulation.setDeviceMetricsOverride`）。
+要回退有头模式加 `--headful`。
+
+实测（4 cookie × 16 并发 = 64 线程，headless 池）：
 
 | 场景 | 单 cookie | 4 cookie 池 |
 |---|---|---|
-| 图搜 60 页 | 63 SKU/s | **236.9 SKU/s** |
-| 类目 100 页 | 34.5 SKU/s | **192.6 SKU/s** |
-| 类目 300 页（新鲜池） | — | **247.6 SKU/s**，96% 成功，0 个 403 |
+| 图搜 60 页 / 720 SKU | 63 SKU/s | **211 SKU/s** |
+| 类目 300 页 | 34.5 SKU/s | **299 SKU/s，300/300 成功（100%）** |
 
 每个 cookie 大约 100~150 页的新鲜额度，用完后转 403；`pool_client.py` 会在 403 累积到 30 次时
 **自动重新预热补池**（约 8 秒），采集不中断。

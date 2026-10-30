@@ -104,19 +104,31 @@ challenge 绑的不只是 cookie，还有会话内存态/指纹绑定。
 
 前提：这个浏览器访问过 `www.ozon.ru`。
 
-### ⚠️ headless 不行（根因已定位）
+### ✅ headless 可以用（2026-10-30 修正）
 
-| 模式 | 页面 | 拿到的 cookie 能否用于 API |
+结论推翻过一次，最后定位到**唯二的破绽**：
+
+| 破绽 | headless 默认值 | 修法 |
 |---|---|---|
-| `--headless=new`（默认 UA） | ❌ title = "Похоже, нет соединения" | — |
-| `--headless=new --user-agent=<真实UA>` | ✅ 页面正常打开，cookie 78 字节 | ❌ **API 仍 403** |
-| headful + 窗口移出屏幕 | ✅ | ✅ 200 |
+| UA 带 `HeadlessChrome` | `...HeadlessChrome/156...` | `--user-agent=<真实 Chrome UA>` |
+| **`screen.width/height` 默认 800×600** | `[800, 600]` | CDP `Emulation.setDeviceMetricsOverride(screenWidth=2560, screenHeight=1440)` |
 
-**根因**：headless 的 UA 里带 `HeadlessChrome`，Ozon 直接拒。把 UA 改成正常的之后，
-页面能开、cookie 也能拿到（9 个，含 `abt_data`），但**用这份 cookie 从外部打 API 仍然 403** ——
-说明 challenge 通过时签发的 `abt_data` 还绑了更深的指纹（WebGL/字体等 headless 与 headful 的差异）。
+其余指纹（canvas hash / WebGL vendor+renderer / 字体 / `window.chrome` / plugins / hardwareConcurrency / languages / timezone）**headless 与 headful 完全一致**。
 
-结论：**headless 拿的 cookie 是废的**，只能 headful（哪怕窗口在屏幕外），或者直接读现有浏览器的 cookie。
+两个都补上之后：
+
+```
+headless + 真实UA + screen 2560x1440
+  → 页面正常打开 5.4s
+  → 8 个 cookie
+  → API 200 len=314248     ✓ 可直接用
+```
+
+之前判断"headless cookie 是废的"，是因为只改了 UA 没改 screen——800×600 是 headless 的默认值，
+真实 Mac 是 2560×1440，这个差异足够被判定。
+
+**现状**：`prepare_pool.py` 默认走 headless（完全无窗口），实测 4 会话 300 页 **100% 成功、299 SKU/s**，
+比 headful 还快（渲染开销小）。要回退加 `--headful`。
 
 所以「静默」只能靠把窗口丢到屏幕外，不能靠 headless。
 

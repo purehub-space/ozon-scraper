@@ -201,7 +201,35 @@ headful + --window-position=-2400,-2400  →  正常
 
 ---
 
-## 12. `ozon_search.py` 的缓存 TTL 和实际寿命不一致
+## 12. headless 的唯一破绽是 screen 尺寸，不是 UA
+
+**症状**：headless 打不开 Ozon（title = "Похоже, нет соединения"）。改成真实 UA 后页面能开、
+cookie 能拿到，但拿去打 API 仍 403 —— 一度以为「headless 的 cookie 是废的」。
+
+**真相**：完整对比 headless vs headful 的 13 项指纹，只有一项不同：
+
+```
+screen   headful [2560, 1440, 2560, 1310, 24, 24]
+         headless [ 800,  600,  800,  600, 24, 24]   ← 默认值
+```
+
+UA / canvas hash / WebGL vendor+renderer / 字体数 / `window.chrome` / plugins / hw / langs / tz **全部一致**。
+
+**修法**：
+
+```python
+call("Emulation.setDeviceMetricsOverride", {
+    "width": 1440, "height": 900, "deviceScaleFactor": 1, "mobile": False,
+    "screenWidth": 2560, "screenHeight": 1440,      # ← 关键
+    "screenOrientation": {"type": "landscapePrimary", "angle": 90},
+})
+```
+
+改完 API 直接 200。所以 **headless 完全可用**，还能省掉窗口。
+
+教训：判断"某种浏览器模式不可用"之前，先把指纹逐项对比一遍，别停在「UA 改了还不行」就下结论。
+
+## 13. `ozon_search.py` 的缓存 TTL 和实际寿命不一致
 
 脚本里写 `COOKIE_TTL = 1800`（30 分钟），但实测 cookie 活过 11 小时。
 

@@ -24,6 +24,13 @@ CHROME_CANDIDATES = [
 ]
 BASE_PORT = 9700
 
+# 实测：headless 唯一暴露点 = screen 默认 800x600。
+# UA 改成真实 Chrome + 覆盖 screen 之后，headless 完全可用（API 200）。
+REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
+SCREEN_W, SCREEN_H = 2560, 1440
+VIEW_W, VIEW_H = 1440, 900
+
 
 def chrome():
     for c in CHROME_CANDIDATES:
@@ -32,7 +39,7 @@ def chrome():
     return None
 
 
-def warm_one(idx, timeout=50, quiet=True):
+def warm_one(idx, timeout=50, quiet=True, headless=True):
     """起一个 Chrome（窗口移出屏幕）→ 过 challenge → 返回 cookie"""
     try:
         import websocket
@@ -43,10 +50,17 @@ def warm_one(idx, timeout=50, quiet=True):
         return {"i": idx, "err": "找不到 Chrome"}
     port = BASE_PORT + idx
     prof = tempfile.mkdtemp(prefix=f"ozon-pool{idx}-")
-    p = subprocess.Popen([exe, f"--remote-debugging-port={port}", f"--user-data-dir={prof}",
-        "--no-first-run", "--no-default-browser-check", "--window-size=1200,800",
-        "--window-position=-2400,-2400", "--disable-blink-features=AutomationControlled", "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    args = [exe, f"--remote-debugging-port={port}", f"--user-data-dir={prof}",
+            "--no-first-run", "--no-default-browser-check",
+            f"--window-size={VIEW_W},{VIEW_H}",
+            "--disable-blink-features=AutomationControlled"]
+    if headless:
+        # 完全无窗口：headless=new + 真实 UA（否则 UA 带 HeadlessChrome 直接被拒）
+        args += ["--headless=new", f"--user-agent={REAL_UA}"]
+    else:
+        args += ["--window-position=-2400,-2400"]
+    args.append("about:blank")
+    p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ws = None
     try:
         for _ in range(90):
@@ -76,6 +90,16 @@ def warm_one(idx, timeout=50, quiet=True):
             r = call("Runtime.evaluate", {"expression": e, "awaitPromise": True, "returnByValue": True})
             return r.get("result", {}).get("result", {}).get("value")
         call("Page.enable"); call("Runtime.enable"); call("Network.enable")
+        if headless:
+            # headless 的 screen 默认 800x600 —— 这是被识别的唯一破绽
+            call("Emulation.setDeviceMetricsOverride", {
+                "width": VIEW_W, "height": VIEW_H, "deviceScaleFactor": 1, "mobile": False,
+                "screenWidth": SCREEN_W, "screenHeight": SCREEN_H,
+                "screenOrientation": {"type": "landscapePrimary", "angle": 90},
+            })
+            call("Emulation.setUserAgentOverride", {
+                "userAgent": REAL_UA, "acceptLanguage": "zh-CN,zh;q=0.9,ru;q=0.8",
+            })
         call("Page.navigate", {"url": "https://www.ozon.ru/"})
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -96,7 +120,7 @@ def warm_one(idx, timeout=50, quiet=True):
         p.terminate()
 
 
-def prepare(n, force=False):
+def prepare(n, force=False, headless=True):
     os.makedirs(CACHE, exist_ok=True)
     if force:
         for f in glob.glob(os.path.join(CACHE, "pool-*.json")):
@@ -104,8 +128,11 @@ def prepare(n, force=False):
     print(f"[*] 并行预热 {n} 个无痕实例（窗口都在屏幕外，看不见）")
     t0 = time.time()
     out = [None] * n
+    mode = "headless（完全无窗口）" if headless else "headful（窗口屏幕外）"
+    print(f"[*] 模式: {mode}")
+
     def w(i):
-        out[i] = warm_one(i)
+        out[i] = warm_one(i, headless=headless)
     ths = [threading.Thread(target=w, args=(i,)) for i in range(n)]
     [t.start() for t in ths]
     [t.join() for t in ths]
@@ -163,8 +190,9 @@ if __name__ == "__main__":
     ap.add_argument("--n", type=int, default=4, help="预热几个（默认 4）")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--headful", action="store_true", help="用有头浏览器（窗口屏幕外）而不是 headless")
     a = ap.parse_args()
     if a.list:
         list_pool()
     else:
-        prepare(a.n, a.force)
+        prepare(a.n, a.force, headless=not a.headful)
