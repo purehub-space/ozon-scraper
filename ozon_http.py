@@ -222,6 +222,18 @@ def parse_tile(it, page_no):
                     o["reviews"] = count_num(texts[1])
     tgi = it.get("trackingInfo") or {}
     o["is_advert"] = bool(((tgi.get("click") or {}).get("custom") or {}).get("advertLite"))
+    # 库存：实测路径 multiButton.ozonButton.addToCart.quantityButton.maxItems
+    # （兼容变体：ozonButton.quantityButton / multiButton.quantityButton / mainState）
+    mb = it.get("multiButton") or {}
+    ob = mb.get("ozonButton") or {}
+    qb = ((ob.get("addToCart") or {}).get("quantityButton")
+          or ob.get("quantityButton") or mb.get("quantityButton") or {})
+    o["stock_max"] = qb.get("maxItems")
+    if o["stock_max"] is None:
+        for st in it.get("mainState") or []:
+            if st.get("type") == "quantityButton":
+                o["stock_max"] = (st.get("quantityButton") or {}).get("maxItems")
+                break
     return o
 
 

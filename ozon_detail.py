@@ -243,6 +243,9 @@ def main():
     ap.add_argument("--pdp2", action="store_true", default=True)
     ap.add_argument("--no-pdp2", dest="pdp2", action="store_false")
     ap.add_argument("--reviews", type=int, default=0, help="评论页数（30 条/页），0=不抓")
+    ap.add_argument("--sort", default="usefulness_desc",
+                    choices=["usefulness_desc", "score_desc", "score_asc"],
+                    help="评论排序（score_asc=只看差评、score_desc=只看好评）")
     a = ap.parse_args()
 
     out = os.path.abspath(a.out)
@@ -270,7 +273,7 @@ def main():
         if not creds:
             print("[!] 预热失败")
             raise SystemExit(2)
-    print(f"[+] 用 cookie（{creds['n_cookies']} 个，{int(time.time()-creds['at'])}s 前）")
+    print(f"[+] 用 cookie（{creds.get('n') or creds.get('n_cookies') or 0} 个，{int(time.time()-creds['at'])}s 前）")
 
     H = {
         "accept": "application/json", "accept-language": "zh-CN,zh;q=0.9,ru;q=0.8",
@@ -337,9 +340,11 @@ def main():
                 row.update(parse_pdp2(j2.get("widgetStates") or {}))
 
         if a.reviews > 0:
-            revs, params = [], ""
+            # 评论：带 reviewsVariantMode=2 + 排序（score_asc/score_desc 星级筛选），?page=N 真翻页（实测零重叠）
+            revs = []
+            sort_q = f"?reviewsVariantMode=2&sort={a.sort}"
             for p in range(1, a.reviews + 1):
-                path = f"/product/{sku}/reviews/" + ("" if p == 1 else params or f"?page={p}")
+                path = f"/product/{sku}/reviews/{sort_q}" + ("" if p == 1 else f"&page={p}")
                 jr = get(path)
                 if not jr:
                     break
@@ -349,11 +354,6 @@ def main():
                 row["review_total"] = pr["total"]
                 row["review_overall"] = pr["overall"]
                 revs.extend(pr["rows"])
-                nxt = None
-                for l in (pr.get("paging_links") or []):
-                    pass
-                if not nxt:
-                    break
             row["reviews"] = revs
 
         with _lock:

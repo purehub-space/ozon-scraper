@@ -93,11 +93,21 @@ python3 to-csv.py out_detail
 | 文件 | 内容 |
 |---|---|
 | `skus.txt` | 纯 SKU ID，一行一个 |
-| `products.jsonl` | sku/标题/图片/价格/原价/折扣/评分/评价数/库存提示/广告位标记/页码 |
+| `products.jsonl` | sku/标题/图片/价格/原价/折扣/评分/评价数/**库存上限 stock_max**/广告位标记/页码 |
 | `run.log` | 每次请求的状态、耗时、失败原因 |
 | `progress.json` | 进度（中断后能看到跑到哪） |
 
 `ozon_detail.py` 输出 `details.jsonl`：价格三档/变体矩阵/图集/视频/短特征/全量属性/描述 HTML/话题标签/卖家/类目路径/评论。
+
+### 库存与评论：HTTP 通道即可批量
+
+- **库存**：`ozon_http.py` / `ozon_search.py` 列表页输出带 `stock_max`（tile
+  `multiButton.ozonButton.addToCart.quantityButton.maxItems`，**100% 覆盖**，翻页即全类目库存，
+  无需加购；`2000` 为平台硬顶）。实测 2 页 16 SKU 全量命中（987/1353/2000…）。
+- **评论**：`ozon_detail.py --reviews N --sort score_asc|score_desc|usefulness_desc`，
+  `?page=N` 真翻页（实测零重叠），星级排序生效（score_asc=差评在前、score_desc=好评在前）。
+  实测 2 SKU × 2 页 21.6s，0 失败。星级精确过滤（score/rating 参数）不生效，需本地按
+  `content.score` 过滤。
 
 ## 一条链跑完
 
