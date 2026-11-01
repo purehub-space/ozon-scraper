@@ -20,7 +20,7 @@ CACHE = os.path.expanduser("~/.cache/ozon-search")
 CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/local/bin/chromium",
 ]
 BASE_PORT = 9700
 
