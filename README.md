@@ -23,7 +23,7 @@ pip3 install --user curl_cffi websocket-client
 
 （`websocket-client` 只在需要静默预热 cookie 时用到；有现成 cookie 可以不装）
 
-## 四个脚本
+## 五个脚本
 
 | 脚本 | 用途 | 输入 | 吞吐 |
 |---|---|---|---|
@@ -31,8 +31,40 @@ pip3 install --user curl_cffi websocket-client
 | `ozon_search.py` | 关键词全量（自动转类目 + 预热） | 关键词或 /search/ URL | 37.5 → **179 SKU/s** |
 | `ozon_image.py` | 以图搜同款 | 本地图片 或 图片 URL | 63 → **211 SKU/s** |
 | `ozon_detail.py` | SKU 详情 + 评论 | skus.txt | 4.4 → **18.6 SKU/s** |
+| `ozon_browser.py` | 浏览器通道（额度友好） | URL/SKU/店铺/批量 | ~0.5-2 SKU/s（受浏览器会话约束） |
 
-（后者为加 `--pool 4` 的实测值；四个脚本都支持 `--pool N` 和 `--browser chrome`）
+（HTTP 四件套为加 `--pool 4` 的实测值，都支持 `--pool N` 和 `--browser chrome`）
+
+### ozon_browser.py —— 浏览器内同源 fetch（保护 cookie 额度）
+
+纯 HTTP 通道每份 cookie 只有 100~150 页额度，直打容易打坏。本脚本走 headful
+Chromium + CDP，在页面内用同源 fetch 调 entrypoint JSON API，与真实用户流量同源，
+额度消耗极小，且能拿到 HTTP 通道拿不到的字段：
+
+- tile `maxItems`（**100% 覆盖的批量库存**，翻列表页即可）
+- 同款卖家的**企业凭据**（公司名/地址/国家/营业模式，credentials 数组）
+- 评论**星级 + 排序**（score_asc/score_desc，星级过滤 URL 参数不生效需本地过滤）
+- PDP 完整字段（title/价格三件套/库存/卖家/评分）
+
+```bash
+# 关键词 / 类目 / 店铺页（tile 含库存 maxItems）
+python3 ozon_browser.py --url "/category/igrushki-antistress-7181/" --pages 1-3 --out out_cat
+python3 ozon_browser.py --url "/search/?from_global=true&text=сквиш" --pages 1 --out out_search
+
+# 单 SKU：PDP + 同款卖家（112家+企业凭据）+ 评论
+python3 ozon_browser.py --sku 5527434733 --with-offers --with-reviews --out out_sku
+
+# 批量 SKU（文件每行一个）
+python3 ozon_browser.py --file skus.txt --with-offers --out out_batch
+
+# 加购可购性验证（库存精确值需页面渲染，批量库存走 tile maxItems）
+python3 ozon_browser.py --sku 5527434733 --stock-batch --out out_stock
+```
+
+鲁棒性：会话预热自动过 challenge（Antibot 检测重试）；fetch 指数退避；
+请求间隔限速（--delay）；输出原子落盘断点续采（已存在跳过）；
+同款/评论请求偶发被服务器路由回 PDP 时自动刷新会话重试（实测 3 次内恢复）。
+
 
 ## 快速开始
 
