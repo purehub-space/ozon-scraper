@@ -99,3 +99,32 @@ GET /api/entrypoint-api.bx/page/json/v2?url=/searchSuggestions/search/?text=<词
 2. **竞对监控**：目标 SKU → `otherOffersFromSellers`（全卖家 + 企业凭据 + 价格）→ 卖家店铺页（订单量/上新）
 3. **效率**：用 `/widget/json/v2/batch` 批量拉 widget；cookie 额度有限，浏览器内 fetch（`browser_api_cdp.py`）优于直连
 4. **待办**：`getSearchTapTags` 需改 POST 或补参数（GET 405）；登录态可解锁 favorite* 系列（收藏数据）
+
+---
+
+## 库存获取（2026-11-01 实弹定论）
+
+### 三种途径对比
+
+| 途径 | 覆盖 | 精度 | 机制 |
+|---|---|---|---|
+| **购物车 maximum** | ✅ 100%（促销+非促销） | 精确数字 | `POST /action/addToCart {items:[{id,quantity}]}` → `GET /cart` → `cartSplit.cartItems[].quantity.maximum` |
+| **bigPromoPDP** | ⚠️ 仅促销商品 | 精确数字 | PDP `bigPromoPDP.stockNumber` + `counter.percentage`（已售比例） |
+| **卡片"X ед осталось"** | ⚠️ 仅促销商品 | 精确数字 | 搜索/类目/推荐 tile 卡片文本 |
+
+### 决定性验证
+
+- SKU 5527434733：PDP bigPromoPDP 显示库存 172 → 加购后购物车 `maximum=172` ✅ 完全一致
+- 非促销 3 SKU（无任何库存显示）：加购后 `maximum=987/1353/2000` → **非促销品库存同样可拿**
+- `maximum` 是服务端按可用库存动态下发；**2000 为平台硬顶**（库存≥2000 时封顶显示 2000）
+- **修正**：早期判断"maximum=2000 固定值、不能反推库存"为错误结论
+
+### 反推销量
+
+促销品：`已售 = stockNumber/(1-percentage) × percentage`（5527434733 → 总量≈905、已售≈733）
+非促销品：无已售数据，仅评价数/收藏数代理。
+
+### 采集建议
+
+- 竞对重点 SKU：定期（如每天）加购+读 maximum → 库存变化曲线（动销速率）
+- 注意：加购写入匿名购物车，同一浏览器会话内可重复覆盖；不触发支付
