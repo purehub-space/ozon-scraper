@@ -128,3 +128,39 @@ GET /api/entrypoint-api.bx/page/json/v2?url=/searchSuggestions/search/?text=<词
 
 - 竞对重点 SKU：定期（如每天）加购+读 maximum → 库存变化曲线（动销速率）
 - 注意：加购写入匿名购物车，同一浏览器会话内可重复覆盖；不触发支付
+
+---
+
+## 库存/价格/销量批量获取（2026-11-01 补充定论）
+
+### 库存：列表页 tile 直接返回（无需加购）
+
+**`tileGridDesktop.items[].quantityButton.maxItems` = 商品可用库存**，100% 覆盖（促销+非促销）：
+- cat p1: 8/8（172/219/2000/1395/1353/1597/1629/987）
+- cat p2: 8/8（18/360/840/1660/2000/601/991/2000）
+- search: 8/8（2000/214/67/166/2000/287/2000/215）
+- 与购物车加购实测完全吻合（5034371857=987、5034433921=1353、5097092644=2000）
+- **批量采集 = 翻列表页**（搜索/类目/店铺 tileGrid），每页 8~30 卡片，翻页无上限
+- 2000 为平台硬顶
+
+### 价格
+
+| 途径 | 内容 | 覆盖 |
+|---|---|---|
+| tile priceV2 | 现价+原价+折扣% | 列表页批量 |
+| PDP webPrice | 现价/originalPrice/Ozon 卡价 | 单 SKU |
+| `/modal/web_pdp_lower_price?product_id=<sku>` | **上月平均价**（280₽ vs 10月均价 299₽，降19₽） | 降价商品 |
+
+无完整历史价格 API；唯一历史值=上月均价。
+
+### 销量：无直接字段
+
+- 无 "已售 N 件"；收藏数接口（favoriteCountItems）匿名不可用（entity not found）
+- 代理：评价数（webSingleProductScore/webReviewProductScore.reviewsCount）+ 库存变化曲线
+
+### 大量历史数据方案（唯一正路 = 自建快照）
+
+Ozon 不提供历史价格/销量 API。方法：
+1. 每天抓目标列表页（类目/关键词/店铺）→ 存 tile 全字段（SKU、maxItems 库存、priceV2、评分、评价数）
+2. 逐日差值：库存变化=动销速率、价格变动、评价增长=销量代理
+3. 竞对重点 SKU 可叠加加购+读 maxItems 精确认证
