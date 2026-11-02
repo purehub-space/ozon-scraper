@@ -613,7 +613,7 @@ def run_collection(keyword=None, sku_inputs=None, out_file="ozon_collected.json"
         print(f"{idx:<4} {s['name'][:24]:<25} {str(s['seller_id']):<10} {str(s['orders_badge']):<10} {str(s['rating']):<8} {str(s.get('total_stock', 0)):<10}")
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Ozon 鲁棒高并发综合采集工具（支持最新库存+评论通道）")
     parser.add_argument("--keyword", default="пеньюар кружевной", help="搜索关键词")
     parser.add_argument("--sku", action="append", help="指定单个或多个 SKU（可多次传入）")
@@ -640,3 +640,7 @@ if __name__ == "__main__":
         reviews_pages=args.reviews,
         review_sort=args.sort,
     )
+
+
+if __name__ == "__main__":
+    main()
