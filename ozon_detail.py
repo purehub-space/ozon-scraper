@@ -26,9 +26,12 @@ try:
 except ImportError:
     PoolClient = None
 
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-VOID_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-           "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
+from ozon_env import get_chrome_executable, detect_proxy
+
+CHROME = get_chrome_executable() or "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+PROXY = detect_proxy()
+VOID_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 _lock = threading.Lock()
 
 

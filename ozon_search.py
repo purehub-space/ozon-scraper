@@ -36,11 +36,13 @@ try:
 except ImportError:
     PoolClient = None
 
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+from ozon_env import get_chrome_executable, detect_proxy
+
+CHROME = get_chrome_executable() or "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CACHE = os.path.expanduser("~/.cache/ozon-search")
-VOID_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-           "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
-COOKIE_TTL = 1800  # 30 分钟
+VOID_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+COOKIE_TTL = 3600 * 6  # 6 小时
 
 
 def headers(ua=VOID_UA, cookie=None):
@@ -69,6 +71,8 @@ def warm(url, port=9970, timeout=45, quiet=True):
            "--no-first-run", "--no-default-browser-check",
            "--window-size=1200,800", "--window-position=-2400,-2400",
            "--disable-blink-features=AutomationControlled", "about:blank"]
+    if PROXY:
+        cmd.append(f"--proxy-server={PROXY}")
     p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ws = None
     try:
