@@ -238,7 +238,8 @@
       <a href="#p8-section" class="nav-btn">四、P8 搜索排位解释器 (explainer)</a>
       <a href="#inventory-section" class="nav-btn">五、买家端前台库存通道 (stock_max)</a>
       <a href="#image-quality" class="nav-btn">六、图片清晰度与 WebP 动态升维</a>
-      <a href="#metrics-calc" class="nav-btn">七、二次派生指标计算规范</a>
+      <a href="#frontend-section" class="nav-btn">五、买家端前台字段全典 (www.ozon.ru)</a>
+      <a href="#metrics-calc" class="nav-btn">八、二次派生指标计算规范</a>
     </div>
   </header>
 
@@ -1144,6 +1145,299 @@ def get_high_res_ozon_img(raw_url: str, target_size: str = "wc1200") -> str:
 # 示例:
 # 原始图: https://ir-20.ozonstatic.cn/s3/multimedia-1-b/20279061623.jpg
 # 升维后: https://ir-20.ozonstatic.cn/s3/multimedia-1-b/wc1200/20279061623.jpg (高清无损 WebP)
+    </div>
+  </section>
+
+  
+  <!-- 八、买家端前台全量字段与 Widget 映射全典 -->
+  <section id="frontend-section">
+    <h2>八、买家端前台 (www.ozon.ru) 字段字典与 Widget 映射全景 <span class="badge b-blue">免登录公开数据</span></h2>
+    <div class="callout callout-info">
+      <b>买家端取数机制与三大入口</b>：<br>
+      买家端核心是通用的「页面即 JSON」微前端端点，数据全部挂载在返回的 <code>widgetStates</code> 对象中（key 为 <code>widgetName-id-default-version</code>，值为内部 JSON 字符串）：<br>
+      ① <code>GET /api/entrypoint-api.bx/page/json/v2?url=&lt;站点路径&gt;</code>（核心通用入口）<br>
+      ② <code>GET /api/composer-api.bx/page/json/v2?url=&lt;站点路径&gt;</code>（等价入口）<br>
+      ③ <code>GET /product/&lt;sku&gt;/?layout_container=pdpPage2column&amp;layout_page_index=2</code>（PDP 第二屏详情与全属性）<br>
+      <b>语言机制警示</b>：前台语言<b>由 Session/Profile Locale 强绑定</b>，请求头传入 <code>Accept-Language</code> 或 <code>&amp;language=ru</code> 完全无效。采集时必须确保会话预热为目标语言（默认 ru）。
+    </div>
+
+    <h3>1. PDP 商品详情页 Widget 级字段字典 (第一屏 + 第二屏)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>组件 Widget Key</th>
+          <th>字段路径</th>
+          <th>业务中文名</th>
+          <th>字段定义与选品分析用途</th>
+          <th>数据样例</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">webProductHeading</td>
+          <td class="mono">title / text</td>
+          <td><b>商品主标题</b></td>
+          <td>买家前台呈现的完整标题字符串（未被截断），包含核心品牌词、属性词与规格</td>
+          <td class="mono">Сенсорная развивающая доска...</td>
+        </tr>
+        <tr>
+          <td class="mono">webDetailSKU</td>
+          <td class="mono">copyText / sku</td>
+          <td><b>商品 SKU</b></td>
+          <td>Ozon 买家前台数字货号，全系统唯一关联主键</td>
+          <td class="mono">5527434733</td>
+        </tr>
+        <tr>
+          <td class="mono">webPrice</td>
+          <td class="mono">cardPrice</td>
+          <td><b>Ozon 卡价 (绿标)</b></td>
+          <td>★ 买家使用 Ozon 银行卡支付时的最终优惠底价，是转化率最高的核心显示价</td>
+          <td class="mono">263 ₽</td>
+        </tr>
+        <tr>
+          <td class="mono">webPrice</td>
+          <td class="mono">price</td>
+          <td><b>普通售价 (黑标)</b></td>
+          <td>常规非银行卡买家看到的标价</td>
+          <td class="mono">280 ₽</td>
+        </tr>
+        <tr>
+          <td class="mono">webPrice</td>
+          <td class="mono">originalPrice</td>
+          <td><b>划线原价</b></td>
+          <td>卖家设置的划线参考原价，用于在页面上计算划线折扣率</td>
+          <td class="mono">2800 ₽</td>
+        </tr>
+        <tr>
+          <td class="mono">webPrice</td>
+          <td class="mono">isAvailable</td>
+          <td><b>可售在架状态</b></td>
+          <td>布尔值；商品是否处于买家端正常可购买状态</td>
+          <td class="mono">true</td>
+        </tr>
+        <tr>
+          <td class="mono">webAspects</td>
+          <td class="mono">aspects[].variants[]</td>
+          <td><b>变体全家桶矩阵</b></td>
+          <td>★ <b>买家端独家优势</b>：一网打尽该 Listing 下所有变体（颜色、尺寸、规格）的 <code>sku</code>、<code>price</code>、<code>colors</code>(HEX色值)、<code>availability</code> 及封面图</td>
+          <td class="mono">sku: 5527434734, aspect: Цвет</td>
+        </tr>
+        <tr>
+          <td class="mono">webGallery</td>
+          <td class="mono">images[] / coverImage</td>
+          <td><b>主图图集与封面</b></td>
+          <td>高清商品图 URL 数组（可直接通过 /wc1200/ 参数实现 WebP 升维）</td>
+          <td class="mono">https://ir-20.ozonstatic.cn/...</td>
+        </tr>
+        <tr>
+          <td class="mono">webGallery</td>
+          <td class="mono">videos[].url</td>
+          <td><b>主图视频流</b></td>
+          <td>卖家上传的商品演示视频直链（MP4 格式）</td>
+          <td class="mono">https://.../video.mp4</td>
+        </tr>
+        <tr>
+          <td class="mono">webShortCharacteristics</td>
+          <td class="mono">characteristics[]</td>
+          <td><b>首屏核心短特征</b></td>
+          <td>包含平台属性 ID（如 <code>Type_0</code>, <code>Height_0</code>）与对应属性文本值</td>
+          <td class="mono">Type_0: "Антистресс"</td>
+        </tr>
+        <tr>
+          <td class="mono">webCharacteristics (P2)</td>
+          <td class="mono">characteristics[].short[]</td>
+          <td><b>全量结构化属性表</b></td>
+          <td>第二屏完整规格参数表：包含材质、产地、适用年龄、重量、包装尺寸等全量 Key-Value</td>
+          <td class="mono">Материал: "Силикон"</td>
+        </tr>
+        <tr>
+          <td class="mono">webDescription (P2)</td>
+          <td class="mono">richAnnotation</td>
+          <td><b>商品详情富文本 HTML</b></td>
+          <td>详情页长篇图文介绍、富文本描述代码（含 HTML 换行与图片插槽）</td>
+          <td class="mono">&lt;p&gt;Мягкая игрушка...&lt;/p&gt;</td>
+        </tr>
+        <tr>
+          <td class="mono">webReviewProductScore</td>
+          <td class="mono">totalScore / reviewsCount</td>
+          <td><b>商品评分 / 评价数</b></td>
+          <td>前台买家累计综合评分（0~5 分）与有效评价数量</td>
+          <td class="mono">4.9 / 15 评价</td>
+        </tr>
+        <tr>
+          <td class="mono">bigPromoPDP</td>
+          <td class="mono">stockNumber / percentage</td>
+          <td><b>大促抢购库存与进度</b></td>
+          <td>参与限时折扣时的实时动态：剩余库存文本（如 <code>"172 шт."</code>）及已售百分比（<code>81%</code>）</td>
+          <td class="mono">stockNumber: "172 шт."</td>
+        </tr>
+        <tr>
+          <td class="mono">webCurrentSeller</td>
+          <td class="mono">sellerId / name</td>
+          <td><b>当前在售店铺</b></td>
+          <td>当前抢占 Buybox 的卖家店铺名称与唯一 <code>sellerId</code></td>
+          <td class="mono">id: 4681843, name: Бутик</td>
+        </tr>
+        <tr>
+          <td class="mono">webCurrentSeller</td>
+          <td class="mono">trustFactors[]</td>
+          <td><b>店铺信誉标签</b></td>
+          <td>包含店铺累计单量徽标（如 <code>"54,1 K Заказов"</code>）与好评率</td>
+          <td class="mono">"54,1 K Заказов"</td>
+        </tr>
+        <tr>
+          <td class="mono">webBestSeller</td>
+          <td class="mono">count / minPrice</td>
+          <td><b>同款其他卖家数</b></td>
+          <td>跟卖该款式的其他卖家数量及外部最低跟卖起售价</td>
+          <td class="mono">count: 4, 从 250 ₽</td>
+        </tr>
+        <tr>
+          <td class="mono">breadCrumbs</td>
+          <td class="mono">breadcrumbs[]</td>
+          <td><b>面包屑类目路径</b></td>
+          <td>从一级到叶子类目的完整导航层级树及品牌主页直达链接</td>
+          <td class="mono">Детские товары > Игрушки...</td>
+        </tr>
+        <tr>
+          <td class="mono">webHashtags (P2)</td>
+          <td class="mono">badges[].text</td>
+          <td><b>话题 UGC 标签</b></td>
+          <td>用户生成的内容标签（带 <code>#</code>），注意：非 Ozon 官方搜索关键词体系</td>
+          <td class="mono">#сквиш, #подарок</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>2. 搜索列表与类目页 (TileGrid) 字段字典</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>组件层级</th>
+          <th>字段路径</th>
+          <th>业务中文名</th>
+          <th>字段定义与避坑指南</th>
+          <th>数据样例</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">tile.action</td>
+          <td class="mono">link</td>
+          <td><b>商品落地路径</b></td>
+          <td>商品的相对访问 URL（如 <code>/product/...-5527434733/</code>）</td>
+          <td class="mono">/product/igrushka-5527434733/</td>
+        </tr>
+        <tr>
+          <td class="mono">mainState.priceV2</td>
+          <td class="mono">price[0].text / price[1].text</td>
+          <td><b>卡片现价 / 划线原价</b></td>
+          <td>列表页呈现的现价与划线价，支持直接提取纯数值</td>
+          <td class="mono">263 ₽ / 2 800 ₽</td>
+        </tr>
+        <tr>
+          <td class="mono">mainState.priceV2</td>
+          <td class="mono">discount</td>
+          <td><b>折扣幅度 %</b></td>
+          <td>卡片角标显示的打折比例（负数形式）</td>
+          <td class="mono">−90%</td>
+        </tr>
+        <tr>
+          <td class="mono">mainState.textDS</td>
+          <td class="mono">text</td>
+          <td><b>低库存紧迫度提示</b></td>
+          <td>当库存告急时出现的提示文本（如 <code>"仅剩 N 件"</code> 或 <code>"осталось N шт."</code>）</td>
+          <td class="mono">"Осталось 3 шт."</td>
+        </tr>
+        <tr>
+          <td class="mono">multiButton</td>
+          <td class="mono">ozonButton.addToCart.quantityButton.maxItems</td>
+          <td><b>真实物理库存上限 (stock_max)</b></td>
+          <td>★ <b>最强字段</b>：无需加购，翻列表页 100% 覆盖商品当前允许购买的真实库存（平台硬顶 2000）</td>
+          <td class="mono">172 (或 2000)</td>
+        </tr>
+        <tr>
+          <td class="mono">trackingInfo</td>
+          <td class="mono">click.custom.advertLite</td>
+          <td><b>搜索广告位标记</b></td>
+          <td>★ <b>布尔值</b>：为 true 代表此卡片走 Trafarets 付费广告曝光，用于精准测算前台广告密度</td>
+          <td class="mono">true</td>
+        </tr>
+        <tr>
+          <td class="mono">filtersDesktop</td>
+          <td class="mono">sections[]</td>
+          <td><b>类目聚合筛选器</b></td>
+          <td>包含 17 个维度的分布数据：价格带、原产国、品牌墙、头部卖家 <code>sellerId</code> 榜单</td>
+          <td class="mono">Магазин, Бренд, Цена</td>
+        </tr>
+        <tr>
+          <td class="mono">infiniteVirtualPaginator</td>
+          <td class="mono">nextPage</td>
+          <td><b>真分页动态游标</b></td>
+          <td>⚠ <b>不可强行 page++</b>：包含单次会话有效的 <code>paginator_token</code>，必须沿此 URL 翻页</td>
+          <td class="mono">?page=2&amp;paginatorToken(...)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>3. 同款跟卖商全景 (/modal/otherOffersFromSellers) 工商凭据字典</h3>
+    <div class="callout callout-success">
+      <b>跟卖与竞对挖掘终极接口</b>：无需登录，请求 <code>/modal/otherOffersFromSellers?product_id=&lt;sku&gt;&amp;sort=price</code>，直接吐出所有跟卖该商品的所有卖家凭据（实测单品可提取 112 家中国跨境与本土卖家）：
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>字段路径</th>
+          <th>业务中文名</th>
+          <th>数据定义与商业价值</th>
+          <th>数据样例</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">sellers[].id</td><td>卖家店铺 ID</td><td>跟卖商的 <code>sellerId</code>，可反向拼接 <code>/seller/&lt;id&gt;/</code> 扫全店商品</td><td class="mono">5902907</td></tr>
+        <tr><td class="mono">sellers[].name</td><td>店铺公开名称</td><td>在 Ozon 上展示的店铺招牌名称</td><td class="mono">漳州兆拓供应链</td></tr>
+        <tr><td class="mono">sellers[].credentials.name</td><td><b>企业法定主体全称</b></td><td>★ 营业执照登记的真实公司名（如中国境内公司名称或俄罗斯 ООО/ИП）</td><td class="mono">漳州兆拓贸易有限公司</td></tr>
+        <tr><td class="mono">sellers[].credentials.number</td><td><b>商业注册号 (OGRN)</b></td><td>★ 俄罗斯主体为 ОГРН (13位) 或 ОГРНИП (15位)；中国跨境卖家为统一社会信用代码</td><td class="mono">913506...</td></tr>
+        <tr><td class="mono">sellers[].credentials.city / country</td><td>注册城市 / 注册国家</td><td>用于排查对手是本土仓备货卖家还是中国跨境直发卖家</td><td class="mono">漳州市 / 中国 (Китай)</td></tr>
+        <tr><td class="mono">sellers[].price.cardPrice.price</td><td>跟卖实际报价</td><td>该卖家参与跟卖竞争的实际买家到底价格</td><td class="mono">198 ₽</td></tr>
+        <tr><td class="mono">sellers[].delivery.period</td><td>履约时效承诺</td><td>承诺给买家的配送时效（如“15~20 天跨境发货”或“2 天本地达”）</td><td class="mono">15-20 дней</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4. 买家评价与真实口碑通道 (/product/&lt;sku&gt;/reviews/) 字典</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>字段路径</th>
+          <th>业务中文名</th>
+          <th>数据定义与排坑说明</th>
+          <th>数据样例</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">content.score</td><td>买家评分星级</td><td>买家实际打分（1 ~ 5 分整数值）</td><td class="mono">1 (差评) / 5 (好评)</td></tr>
+        <tr><td class="mono">content.comment</td><td>评价主文案</td><td>买家主要反馈正文</td><td class="mono">Быстро порвался...</td></tr>
+        <tr><td class="mono">content.positive / negative</td><td>优点 / 缺点细分</td><td>Ozon 特有的结构化优缺点填写项</td><td class="mono">"Мягкий" / "Неприятный запах"</td></tr>
+        <tr><td class="mono">content.photos[] / videos[]</td><td>买家晒图 / 视频 URL</td><td>买家实际收货拍摄的真实图片，用于分析真实做工、瑕疵与包装</td><td class="mono">https://.../rev_img.jpg</td></tr>
+        <tr><td class="mono">author.firstName</td><td>买家昵称</td><td>脱敏后的买家名称</td><td class="mono">Елена</td></tr>
+        <tr><td class="mono">publishedAt</td><td>发布时间戳</td><td>UNIX 时间戳，可转为标准 ISO 日期格式</td><td class="mono">1730419200</td></tr>
+        <tr><td class="mono">usefulness.likeCount</td><td>有用赞同数</td><td>买家点赞数量；高赞评价代表买家群体的普遍痛点</td><td class="mono">42</td></tr>
+        <tr><td class="mono">paging.total</td><td>全量评论条数</td><td>真总数，支持带 <code>?sort=score_asc</code> 真翻页（P1/P2/P3 数据零重叠）</td><td class="mono">20,807</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5. 买家端数据采集与检验避坑法则 (如何检验)</h3>
+    <div class="callout callout-warn">
+      <ul>
+        <li><b>法则 1：工商注册号 ОГРН 认知纠偏（非 ИНН）</b><br>
+        Ozon 买家端前台向买家披露的店铺资质中，展示的数字为 <b>ОГРН（法人公司 13 位）</b> 或 <b>ОГРНИП（个体工商户 15 位）</b>，前台<b>完全不展示 ИНН (纳税人识别号)</b>。若需要 ИНН 必须通过 ОГРН 在俄罗斯联邦税务局 (ФНС) 公开数据库或第三方征信接口（如 DaData / Rusprofile）进行二次反查。</li>
+        <li><b>法则 2：无直接已售件数，严禁将 reviewsCount 当作销量</b><br>
+        买家端前台<b>绝不存在“已售 N 件”这一原生字段</b>！前台的 <code>reviewsCount</code> 是多年累计的评价数。真实销量必须通过卖家端 P6 (<code>soldCount</code>) 取真值，或者对前台 <code>stock_max</code> 进行每日定时快照取差值作为销量代理指标。</li>
+        <li><b>法则 3：评论星级排序 vs 精确过滤陷阱</b><br>
+        在请求评论接口时，URL 传入 <code>score=1</code> 或 <code>rating=1</code> 是<b>完全不生效的（服务端直接忽略）</b>！真解法是必须传入 <code>reviewsVariantMode=2&amp;sort=score_asc</code>，服务端会将 1 星差评排在最前面，并在客户端本地按 <code>content.score == 1</code> 过滤。</li>
+        <li><b>法则 4：adult 18+ 成人类目穿透校验</b><br>
+        在爬取情趣内衣等特定类目时，前台接口会直接拦截并下发 <code>userAdultModal</code> 弹窗，导致 <code>tileGridDesktop</code> 响应完全为空。必须通过 CDP 模拟输入 18 岁以上出生日期（如 <code>01.01.1990</code>）或使用精准长尾词绕过年龄门槛。</li>
+      </ul>
     </div>
   </section>
 
