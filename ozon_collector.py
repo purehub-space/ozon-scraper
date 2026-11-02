@@ -458,6 +458,68 @@ def fetch_sku_reviews(sku_id, creds, proxy=None, pages=1, sort="usefulness_desc"
     }
 
 
+
+def fetch_sku_other_offers(sku_id, creds, proxy=None):
+    """从 /modal/otherOffersFromSellers 提取跟卖商总数、价格区间与跟卖商列表"""
+    sku_str = str(sku_id).strip()
+    headers = {
+        "User-Agent": creds.get("ua", "Mozilla/5.0"),
+        "Cookie": creds.get("cookie", ""),
+        "Accept": "application/json",
+        "Referer": "https://www.ozon.ru/",
+    }
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    rel_path = f"/modal/otherOffersFromSellers?product_id={sku_str}&sort=price"
+    api_url = f"https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url={urllib.parse.quote(rel_path)}"
+
+    try:
+        resp = cr.get(api_url, headers=headers, impersonate="chrome124", proxies=proxies, timeout=12)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        ws = data.get("widgetStates", {})
+        for k, v in ws.items():
+            if "webSellerList" in k:
+                d = json.loads(v) if isinstance(v, str) else v
+                sellers_raw = d.get("sellers") or []
+                extracted = []
+                prices = []
+                for s in sellers_raw:
+                    cred = s.get("credentials") or []
+                    comp_name, reg_no, city = None, None, None
+                    if isinstance(cred, list):
+                        if len(cred) > 0: comp_name = cred[0]
+                        if len(cred) > 1: reg_no = cred[1]
+                        if len(cred) > 2: city = cred[2]
+                    elif isinstance(cred, dict):
+                        comp_name = cred.get("name")
+                        reg_no = cred.get("number")
+                        city = cred.get("city")
+
+                    price_val = parse_num(((s.get("price") or {}).get("cardPrice") or {}).get("price"))
+                    if price_val is None:
+                        price_val = parse_num((s.get("price") or {}).get("price"))
+                    if price_val is not None:
+                        prices.append(price_val)
+
+                    extracted.append({
+                        "seller_id": str(s.get("id")) if s.get("id") else None,
+                        "seller_name": s.get("name"),
+                        "competitor_sku": str(s.get("sku")) if s.get("sku") else None,
+                        "price": price_val,
+                        "company_name": comp_name,
+                        "city": city,
+                    })
+                return {
+                    "count": len(extracted),
+                    "min_price": min(prices) if prices else None,
+                    "max_price": max(prices) if prices else None,
+                    "sellers": extracted
+                }
+    except Exception:
+        return None
+    return None
+
 def run_collection(keyword=None, sku_inputs=None, out_file="ozon_collected.json",
                    max_pages=3, max_threads=8, reviews_pages=0, review_sort="usefulness_desc"):
     proxy = detect_proxy()
@@ -539,6 +601,13 @@ def run_collection(keyword=None, sku_inputs=None, out_file="ozon_collected.json"
                 item["promo_sold_pct"] = seller_info.get("promo_sold_pct")
             if seller_info.get("card_price") and item.get("price") is None:
                 item["price"] = seller_info.get("card_price")
+
+        if with_offers and sku_id:
+            offers = fetch_sku_other_offers(sku_id, creds, proxy=proxy)
+            if offers:
+                item["competing_offers_count"] = offers["count"]
+                item["competing_min_price"] = offers["min_price"]
+                item["competing_sellers"] = offers["sellers"]
 
         if reviews_pages > 0 and sku_id:
             rev_data = fetch_sku_reviews(sku_id, creds, proxy=proxy, pages=reviews_pages, sort=review_sort)
@@ -622,6 +691,7 @@ def main():
     parser.add_argument("--pages", type=int, default=2, help="爬取页数")
     parser.add_argument("--threads", type=int, default=6, help="详情并发线程数")
     parser.add_argument("--reviews", type=int, default=0, help="评论抓取页数（30 条/页，0=不抓）")
+    parser.add_argument("--with-offers", action="store_true", help="同时抓取同款跟卖商家数量与名单明细")
     parser.add_argument("--sort", default="usefulness_desc",
                         choices=["usefulness_desc", "score_desc", "score_asc"],
                         help="评论排序（score_asc=差评/1星在前、score_desc=好评在前、usefulness_desc=最有价值）")
@@ -639,6 +709,7 @@ def main():
         max_threads=args.threads,
         reviews_pages=args.reviews,
         review_sort=args.sort,
+        with_offers=args.with_offers,
     )
 
 

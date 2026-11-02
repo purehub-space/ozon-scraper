@@ -192,7 +192,16 @@ def parse_pdp1(ws):
                          for a in (asp.get("aspects") or [])]
     bs = W(ws, "webBestSeller")
     if bs:
-        o["other_sellers"] = {"count": num(bs.get("count"))}
+        min_p = None
+        for txt in bs.get("textRs") or []:
+            c = txt.get("content", "")
+            if "от " in c or "₽" in c:
+                min_p = num(c) or min_p
+        o["other_sellers"] = {
+            "count": num(bs.get("count")),
+            "min_price": min_p,
+            "modal_link": bs.get("modalLink"),
+        }
     ml = W(ws, "webMarketingLabels")
     if ml:
         o["labels"] = [l.get("badge", {}).get("text") for l in (ml.get("labels") or []) if l.get("badge")]
