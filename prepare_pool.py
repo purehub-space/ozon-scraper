@@ -15,13 +15,10 @@ Cookie 池预热：并行起 N 个无痕 Chrome，各自过 antibot challenge，
   python3 prepare_pool.py --list             # 看现有池状态
 """
 import argparse, glob, json, os, shutil, subprocess, tempfile, threading, time, urllib.request
+from ozon_env import get_chrome_executable, detect_proxy
 
 CACHE = os.path.expanduser("~/.cache/ozon-search")
-CHROME_CANDIDATES = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/local/bin/chromium",
-]
+PROXY = detect_proxy()
 BASE_PORT = 9700
 
 # 实测：headless 唯一暴露点 = screen 默认 800x600。
@@ -33,10 +30,7 @@ VIEW_W, VIEW_H = 1440, 900
 
 
 def chrome():
-    for c in CHROME_CANDIDATES:
-        if os.path.exists(c):
-            return c
-    return None
+    return get_chrome_executable()
 
 
 def warm_one(idx, timeout=50, quiet=True, headless=True):
@@ -59,6 +53,8 @@ def warm_one(idx, timeout=50, quiet=True, headless=True):
         args += ["--headless=new", f"--user-agent={REAL_UA}"]
     else:
         args += ["--window-position=-2400,-2400"]
+    if PROXY:
+        args.append(f"--proxy-server={PROXY}")
     args.append("about:blank")
     p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ws = None

@@ -225,7 +225,10 @@ def request_entrypoint_page(url, creds, proxy=None):
 
 
 def extract_skus_from_page(page_json):
-    """从 entrypoint-api 的响应中抽取商品卡片信息"""
+    """从 entrypoint-api 的响应中抽取商品卡片信息（含最新 stock_max 批量库存通道）"""
+    if isinstance(page_json, dict) and "body" in page_json:
+        b = page_json["body"]
+        page_json = json.loads(b) if isinstance(b, str) else b
     ws = page_json.get("widgetStates", {})
     skus = []
     for k, v in ws.items():
@@ -234,17 +237,74 @@ def extract_skus_from_page(page_json):
                 tile_data = json.loads(v) if isinstance(v, str) else v
                 items = tile_data.get("items", [])
                 for it in items:
-                    sku = it.get("action", {}).get("link")
-                    title = it.get("cellTrackingInfo", {}).get("title")
-                    price = it.get("cellTrackingInfo", {}).get("price")
-                    rating = it.get("cellTrackingInfo", {}).get("rating")
-                    reviews = it.get("cellTrackingInfo", {}).get("reviewCount")
+                    raw_link = (it.get("action") or {}).get("link") or ""
+                    clean_link = raw_link.split("?")[0] if raw_link else None
+
+                    # 提取数值型 SKU ID
+                    sku_id = it.get("sku") or it.get("id")
+                    if not sku_id and clean_link:
+                        m_sku = re.search(r"/product/.*?(\d{6,14})(?:/|$)", clean_link)
+                        if m_sku:
+                            sku_id = m_sku.group(1)
+
+                    cell_ti = it.get("cellTrackingInfo") or {}
+                    title = cell_ti.get("title")
+                    price = parse_num(cell_ti.get("price"))
+                    original_price = None
+                    discount_pct = None
+                    rating = parse_num(cell_ti.get("rating"))
+                    reviews_count = parse_count_num(cell_ti.get("reviewCount"))
+
+                    # 从 mainState 提取精准的 priceV2 现价/原价/折扣
+                    for st in it.get("mainState") or []:
+                        st_type = st.get("type")
+                        if st_type == "priceV2":
+                            pr_list = (st.get("priceV2") or {}).get("price") or []
+                            if pr_list:
+                                price = parse_num(pr_list[0].get("text")) or price
+                            if len(pr_list) > 1:
+                                original_price = parse_num(pr_list[1].get("text"))
+                            discount_pct = parse_num((st.get("priceV2") or {}).get("discount"))
+                        elif st_type == "textDS" and not title:
+                            ds = st.get("textDS") or {}
+                            aid = st.get("id") or ((ds.get("testInfo") or {}).get("automatizationId") or "")
+                            if aid == "name":
+                                title = (ds.get("text") or "").strip()
+                        elif st_type == "labelListV2" and (rating is None or reviews_count is None):
+                            texts = [x.get("text", {}).get("text") for x in ((st.get("labelListV2") or {}).get("items") or []) if x.get("text")]
+                            texts = [x for x in texts if x]
+                            if texts and rating is None:
+                                rating = parse_num(texts[0])
+                            if len(texts) > 1 and reviews_count is None:
+                                reviews_count = parse_count_num(texts[1])
+
+                    # 最新库存通道：multiButton.ozonButton.addToCart.quantityButton.maxItems
+                    # （100% 覆盖，翻页即得全类目可用库存，2000 为平台上限）
+                    mb = it.get("multiButton") or {}
+                    ob = mb.get("ozonButton") or {}
+                    qb = ((ob.get("addToCart") or {}).get("quantityButton")
+                          or ob.get("quantityButton") or mb.get("quantityButton") or {})
+                    stock_max = qb.get("maxItems")
+                    if stock_max is None:
+                        for st in it.get("mainState") or []:
+                            if st.get("type") == "quantityButton":
+                                stock_max = (st.get("quantityButton") or {}).get("maxItems")
+                                break
+
+                    tgi = it.get("trackingInfo") or {}
+                    is_advert = bool(((tgi.get("click") or {}).get("custom") or {}).get("advertLite"))
+
                     skus.append({
-                        "link": sku,
+                        "sku_id": str(sku_id) if sku_id else None,
+                        "link": clean_link or raw_link,
                         "title": title,
                         "price": price,
+                        "original_price": original_price,
+                        "discount_pct": discount_pct,
                         "rating": rating,
-                        "reviews": reviews,
+                        "reviews_count": reviews_count,
+                        "stock_max": stock_max,
+                        "is_advert": is_advert,
                     })
             except Exception:
                 pass
@@ -252,7 +312,7 @@ def extract_skus_from_page(page_json):
 
 
 def fetch_sku_seller_info(sku_link, creds, proxy=None):
-    """从商品详情页的 webCurrentSeller 组件提取店铺与单量信息"""
+    """从商品详情页提取店铺、单量、以及 PDP 级库存/价格 (webCurrentSeller / bigPromoPDP / webPrice)"""
     u = urllib.parse.urlparse(sku_link if sku_link.startswith("http") else f"https://www.ozon.ru{sku_link}")
     api_url = f"https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url={urllib.parse.quote(u.path)}"
 
@@ -264,6 +324,20 @@ def fetch_sku_seller_info(sku_link, creds, proxy=None):
     }
     proxies = {"http": proxy, "https": proxy} if proxy else None
 
+    out = {
+        "seller_name": None,
+        "seller_id": None,
+        "orders_str": None,
+        "orders_count": 0,
+        "rating": None,
+        "promo_stock": None,
+        "promo_sold_pct": None,
+        "card_price": None,
+        "price": None,
+        "original_price": None,
+        "is_available": None,
+    }
+
     try:
         resp = cr.get(api_url, headers=headers, impersonate="chrome124", proxies=proxies, timeout=12)
         if resp.status_code != 200:
@@ -273,31 +347,119 @@ def fetch_sku_seller_info(sku_link, creds, proxy=None):
         for k, v in ws.items():
             if "webCurrentSeller" in k:
                 s_data = json.loads(v) if isinstance(v, str) else v
-                name = s_data.get("name")
-                seller_id = s_data.get("id")
-                orders_str = None
-                rating_str = None
+                out["seller_name"] = s_data.get("name")
+                out["seller_id"] = s_data.get("id")
+                if not out["seller_name"]:
+                    cell = s_data.get("sellerCell") or {}
+                    out["seller_name"] = ((cell.get("centerBlock") or {}).get("title") or {}).get("text")
+                if not out["seller_id"]:
+                    m = re.search(r'"sellerId":\s*"?(\d{3,12})"?', json.dumps(s_data))
+                    if m:
+                        out["seller_id"] = m.group(1)
+
                 for factor in s_data.get("trustFactors", []):
                     title = factor.get("title", "")
                     sub = factor.get("subtitle", "")
                     if "Заказ" in sub:
-                        orders_str = title
+                        out["orders_str"] = title
+                        out["orders_count"] = parse_count_num(title)
                     elif "рейтинг" in sub.lower() or "оценок" in sub.lower():
-                        rating_str = title
+                        out["rating"] = title
+            elif "bigPromoPDP" in k:
+                bp = json.loads(v) if isinstance(v, str) else v
+                out["promo_stock"] = (bp.get("stockNumber") or {}).get("text")
+                out["promo_sold_pct"] = (bp.get("counter") or {}).get("percentage")
+            elif "webPrice" in k:
+                pr = json.loads(v) if isinstance(v, str) else v
+                out["card_price"] = parse_num(pr.get("cardPrice"))
+                out["price"] = parse_num(pr.get("price"))
+                out["original_price"] = parse_num(pr.get("originalPrice"))
+                out["is_available"] = pr.get("isAvailable")
 
-                return {
-                    "seller_name": name,
-                    "seller_id": seller_id,
-                    "orders_str": orders_str,
-                    "orders_count": parse_count_num(orders_str),
-                    "rating": rating_str,
-                }
+        return out if (out["seller_name"] or out["seller_id"]) else None
     except Exception:
         return None
-    return None
 
 
-def run_collection(keyword, out_file, max_pages=3, max_threads=8):
+def fetch_sku_reviews(sku_id, creds, proxy=None, pages=1, sort="usefulness_desc"):
+    """
+    通过最新 reviews 接口获取评论列表
+    端点: /api/entrypoint-api.bx/page/json/v2?url=/product/{sku}/reviews/?reviewsVariantMode=2&sort={sort}&page={page}
+    支持排序: usefulness_desc / score_desc(高星在前) / score_asc(差评/1星在前)
+    """
+    if not sku_id:
+        return {"total": 0, "reviews": []}
+    all_reviews = []
+    total_reviews = None
+    overall_info = None
+
+    headers = {
+        "User-Agent": creds.get("ua", "Mozilla/5.0"),
+        "Cookie": creds.get("cookie", ""),
+        "Accept": "application/json",
+        "Referer": f"https://www.ozon.ru/product/{sku_id}/",
+    }
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+
+    sort_q = f"?reviewsVariantMode=2&sort={sort}"
+    for p in range(1, pages + 1):
+        rel_path = f"/product/{sku_id}/reviews/{sort_q}" + ("" if p == 1 else f"&page={p}")
+        api_url = f"https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url={urllib.parse.quote(rel_path)}"
+        try:
+            resp = cr.get(api_url, headers=headers, impersonate="chrome124", proxies=proxies, timeout=15)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            ws = data.get("widgetStates", {})
+            w_reviews = None
+            for k, v in ws.items():
+                if k.startswith("webListReviews"):
+                    w_reviews = json.loads(v) if isinstance(v, str) else v
+                elif k.startswith("webReviewProductScore") and not overall_info:
+                    sc = json.loads(v) if isinstance(v, str) else v
+                    overall_info = {"score": sc.get("totalScore"), "count": sc.get("reviewsCount")}
+
+            if not w_reviews:
+                break
+
+            pg = w_reviews.get("paging") or {}
+            if total_reviews is None:
+                total_reviews = pg.get("total")
+
+            rev_list = w_reviews.get("reviews") or []
+            for r in rev_list:
+                ct = r.get("content") or {}
+                author_obj = r.get("author") or {}
+                author_name = f"{author_obj.get('firstName', '')} {author_obj.get('lastName', '')}".strip() or None
+                photos = [ph.get("url") for ph in (ct.get("photos") or []) if ph.get("url")]
+                all_reviews.append({
+                    "uuid": r.get("uuid"),
+                    "score": parse_num(ct.get("score")),
+                    "comment": ct.get("comment"),
+                    "positive": ct.get("positive"),
+                    "negative": ct.get("negative"),
+                    "author": author_name,
+                    "published_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(r["publishedAt"])) if r.get("publishedAt") else None,
+                    "photos": photos,
+                    "useful": (r.get("usefulness") or {}).get("useful"),
+                })
+            if not rev_list:
+                break
+        except Exception:
+            break
+
+    return {
+        "sku_id": str(sku_id),
+        "sort": sort,
+        "total": total_reviews,
+        "overall": overall_info,
+        "count": len(all_reviews),
+        "reviews": all_reviews,
+    }
+
+
+def run_collection(keyword=None, sku_inputs=None, out_file="ozon_collected.json",
+                   max_pages=3, max_threads=8, reviews_pages=0, review_sort="usefulness_desc"):
     proxy = detect_proxy()
     print(f"[*] 当前网络代理: {proxy or '直连'}")
 
@@ -305,48 +467,92 @@ def run_collection(keyword, out_file, max_pages=3, max_threads=8):
     creds = load_valid_cookie()
     if not creds:
         print("[*] 缓存中无可用 Cookie，启动 CDP 预热...")
-        target = f"https://www.ozon.ru/search/?text={urllib.parse.quote(keyword)}"
+        target = f"https://www.ozon.ru/search/?text={urllib.parse.quote(keyword)}" if keyword else "https://www.ozon.ru/"
         creds = cdp_warmup(target_url=target, proxy=proxy, is_adult=True)
 
     if not creds:
         print("[!] 预热失败，退出。")
         return
 
-    # 2. 爬取多页商品
-    all_skus = []
-    print(f"[*] 开始检索关键词: {keyword}")
-    for p in range(1, max_pages + 1):
-        page_url = f"/search/?page={p}&text={urllib.parse.quote(keyword)}"
-        try:
-            p_json = request_entrypoint_page(page_url, creds, proxy=proxy)
-            skus = extract_skus_from_page(p_json)
-            print(f"  - 第 {p} 页抓取到 {len(skus)} 个 SKU")
-            all_skus.extend(skus)
-            if not skus:
-                break
-        except Exception as e:
-            print(f"  [!] 第 {p} 页请求失败: {e}")
-
-    # 去重
     unique_skus = []
     seen = set()
-    for s in all_skus:
-        link = s.get("link")
-        if link and link not in seen:
-            seen.add(link)
-            unique_skus.append(s)
 
-    print(f"[+] 累计去重获得 {len(unique_skus)} 个商品，开始并发提取店铺与历史销量...")
+    # 2. 获取商品列表（搜索关键词模式 或 直接 SKU 模式）
+    if keyword:
+        all_skus = []
+        print(f"[*] 开始检索关键词: {keyword}")
+        for p in range(1, max_pages + 1):
+            page_url = f"/search/?page={p}&text={urllib.parse.quote(keyword)}"
+            try:
+                p_json = request_entrypoint_page(page_url, creds, proxy=proxy)
+                skus = extract_skus_from_page(p_json)
+                print(f"  - 第 {p} 页抓取到 {len(skus)} 个商品卡片")
+                all_skus.extend(skus)
+                if not skus:
+                    break
+            except Exception as e:
+                print(f"  [!] 第 {p} 页请求失败: {e}")
 
-    # 3. 并发提取店铺与单量
+        for s in all_skus:
+            ident = s.get("sku_id") or s.get("link")
+            if ident and ident not in seen:
+                seen.add(ident)
+                unique_skus.append(s)
+    elif sku_inputs:
+        for s in sku_inputs:
+            s_clean = str(s).strip()
+            if s_clean and s_clean not in seen:
+                seen.add(s_clean)
+                unique_skus.append({
+                    "sku_id": s_clean,
+                    "link": f"/product/{s_clean}/",
+                    "title": None,
+                    "price": None,
+                    "stock_max": None,
+                })
+    else:
+        print("[!] 请提供 --keyword 或 --sku / --file 参数。")
+        return
+
+    print(f"[+] 累计去重获得 {len(unique_skus)} 个商品，开始并发提取店铺、最新库存与评论通道...")
+
+    # 3. 并发提取详情（店铺+PDP库存）与评论通道
     seller_stats = {}
+
+    def process_item(item):
+        link = item.get("link")
+        sku_id = item.get("sku_id")
+        if not link and sku_id:
+            link = f"/product/{sku_id}/"
+
+        seller_info = fetch_sku_seller_info(link, creds, proxy)
+        if seller_info:
+            item["seller"] = {
+                "id": seller_info.get("seller_id"),
+                "name": seller_info.get("seller_name"),
+                "orders_badge": seller_info.get("orders_str"),
+                "orders_num": seller_info.get("orders_count") or 0,
+                "rating": seller_info.get("rating"),
+            }
+            if seller_info.get("promo_stock"):
+                item["promo_stock"] = seller_info.get("promo_stock")
+                item["promo_sold_pct"] = seller_info.get("promo_sold_pct")
+            if seller_info.get("card_price") and item.get("price") is None:
+                item["price"] = seller_info.get("card_price")
+
+        if reviews_pages > 0 and sku_id:
+            rev_data = fetch_sku_reviews(sku_id, creds, proxy=proxy, pages=reviews_pages, sort=review_sort)
+            item["reviews_data"] = rev_data
+            if rev_data.get("total") is not None:
+                item["reviews_count"] = rev_data.get("total")
+        return item, seller_info
+
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = {executor.submit(fetch_sku_seller_info, item["link"], creds, proxy): item for item in unique_skus}
+        futures = {executor.submit(process_item, item): item for item in unique_skus}
         done_cnt = 0
         for fut in futures:
-            item = futures[fut]
             try:
-                seller = fut.result()
+                item, seller = fut.result()
                 done_cnt += 1
                 if done_cnt % 5 == 0 or done_cnt == len(unique_skus):
                     print(f"  进度: [{done_cnt}/{len(unique_skus)}]")
@@ -359,10 +565,13 @@ def run_collection(keyword, out_file, max_pages=3, max_threads=8):
                             "orders_badge": seller.get("orders_str"),
                             "orders_num": seller.get("orders_count") or 0,
                             "rating": seller.get("rating"),
-                            "sample_skus": [item["link"]],
+                            "sample_skus": [item.get("sku_id") or item.get("link")],
+                            "total_stock": item.get("stock_max") or 0,
                         }
                     else:
-                        seller_stats[s_id]["sample_skus"].append(item["link"])
+                        seller_stats[s_id]["sample_skus"].append(item.get("sku_id") or item.get("link"))
+                        if item.get("stock_max"):
+                            seller_stats[s_id]["total_stock"] += item["stock_max"]
                         if seller.get("orders_count") and seller["orders_count"] > seller_stats[s_id]["orders_num"]:
                             seller_stats[s_id]["orders_num"] = seller["orders_count"]
                             seller_stats[s_id]["orders_badge"] = seller.get("orders_str")
@@ -371,12 +580,22 @@ def run_collection(keyword, out_file, max_pages=3, max_threads=8):
 
     sorted_sellers = sorted(seller_stats.values(), key=lambda x: x["orders_num"], reverse=True)
 
+    # 库存统计
+    stock_hits = [s for s in unique_skus if s.get("stock_max") is not None]
+    total_stock_units = sum(s["stock_max"] for s in stock_hits)
+
     result_data = {
         "keyword": keyword,
         "collected_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_skus": len(unique_skus),
+        "inventory_summary": {
+            "skus_with_stock_max": len(stock_hits),
+            "stock_coverage_pct": round(len(stock_hits) / len(unique_skus) * 100, 1) if unique_skus else 0,
+            "total_stock_units": total_stock_units,
+        },
         "total_sellers": len(sorted_sellers),
         "sellers": sorted_sellers,
+        "skus": unique_skus,
     }
 
     os.makedirs(os.path.dirname(os.path.abspath(out_file)), exist_ok=True)
@@ -384,17 +603,40 @@ def run_collection(keyword, out_file, max_pages=3, max_threads=8):
         json.dump(result_data, f, ensure_ascii=False, indent=2)
 
     print(f"\n[+] 采集完成！输出结果文件: {out_file}")
-    print(f"{'排名':<4} {'店铺名称':<25} {'店铺ID':<10} {'历史单量':<10} {'好评率':<8}")
+    print(f"[*] 库存通道统计: {len(stock_hits)}/{len(unique_skus)} SKU 命中 stock_max (总可用库存: {total_stock_units})")
+    if reviews_pages > 0:
+        rev_count = sum(len(s.get("reviews_data", {}).get("reviews", [])) for s in unique_skus)
+        print(f"[*] 评论通道统计: 累计获取 {rev_count} 条评论 (排序模式: {review_sort})")
+
+    print(f"\n{'排名':<4} {'店铺名称':<25} {'店铺ID':<10} {'历史单量':<10} {'好评率':<8} {'在售总库存':<10}")
     for idx, s in enumerate(sorted_sellers[:10], 1):
-        print(f"{idx:<4} {s['name'][:24]:<25} {str(s['seller_id']):<10} {str(s['orders_badge']):<10} {str(s['rating']):<8}")
+        print(f"{idx:<4} {s['name'][:24]:<25} {str(s['seller_id']):<10} {str(s['orders_badge']):<10} {str(s['rating']):<8} {str(s.get('total_stock', 0)):<10}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ozon 鲁棒店铺与商品采集工具")
+    parser = argparse.ArgumentParser(description="Ozon 鲁棒高并发综合采集工具（支持最新库存+评论通道）")
     parser.add_argument("--keyword", default="пеньюар кружевной", help="搜索关键词")
+    parser.add_argument("--sku", action="append", help="指定单个或多个 SKU（可多次传入）")
+    parser.add_argument("--file", help="SKU 列表文件（每行一个）")
     parser.add_argument("--out", default="erotic_sellers.json", help="输出路径")
     parser.add_argument("--pages", type=int, default=2, help="爬取页数")
     parser.add_argument("--threads", type=int, default=6, help="详情并发线程数")
+    parser.add_argument("--reviews", type=int, default=0, help="评论抓取页数（30 条/页，0=不抓）")
+    parser.add_argument("--sort", default="usefulness_desc",
+                        choices=["usefulness_desc", "score_desc", "score_asc"],
+                        help="评论排序（score_asc=差评/1星在前、score_desc=好评在前、usefulness_desc=最有价值）")
     args = parser.parse_args()
 
-    run_collection(args.keyword, args.out, max_pages=args.pages, max_threads=args.threads)
+    sku_list = list(args.sku or [])
+    if args.file and os.path.exists(args.file):
+        sku_list += [l.strip() for l in open(args.file, encoding="utf-8") if l.strip() and not l.startswith("#")]
+
+    run_collection(
+        keyword=args.keyword if not sku_list else None,
+        sku_inputs=sku_list if sku_list else None,
+        out_file=args.out,
+        max_pages=args.pages,
+        max_threads=args.threads,
+        reviews_pages=args.reviews,
+        review_sort=args.sort,
+    )

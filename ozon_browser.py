@@ -48,7 +48,10 @@ except ImportError:
     print("需要 websocket-client:  pip3 install --user websocket-client")
     sys.exit(1)
 
-CHROME = "/usr/local/bin/chromium"
+from ozon_env import get_chrome_executable, detect_proxy
+
+CHROME = get_chrome_executable() or "/usr/local/bin/chromium"
+PROXY = detect_proxy()
 EP = "/api/entrypoint-api.bx/page/json/v2?url="
 ACTION = "/api/composer-api.bx/_action"
 
@@ -75,6 +78,8 @@ class BrowserSession:
                 "--no-first-run", "--no-default-browser-check",
                 "--window-size=1440,900", "--window-position=-2400,-2400",
                 "--disable-blink-features=AutomationControlled", "about:blank"]
+        if PROXY:
+            args.append(f"--proxy-server={PROXY}")
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL)
         page = None
@@ -253,6 +258,7 @@ def tile_extract(page):
                 continue
             row = {"sku": sku,
                    "maxItems": _g(s, r'"maxItems"\s*:\s*(\d+)'),
+                   "stock_max": _g(s, r'"maxItems"\s*:\s*(\d+)'),
                    "price": _g(s, r'"price"\s*:\s*\[\s*\{\s*"text"\s*:\s*"([^"]+)"'),
                    "originalPrice": _g(s, r'ORIGINAL_PRICE"\s*},\s*\{\s*"text"\s*:\s*"([^"]+)"'),
                    "discount": _g(s, r'"discount"\s*:\s*"([^"]+)"'),
@@ -440,7 +446,8 @@ def collect_url(bs, path, pages, out_dir, delay):
     return results
 
 
-def collect_sku(bs, sku, out_dir, with_offers, with_reviews, delay):
+def collect_sku(bs, sku, out_dir, with_offers, with_reviews, delay,
+                review_sort="usefulness_desc", review_pages=1):
     """单 SKU 采集（PDP + 可选同款卖家/评论）。"""
     os.makedirs(out_dir, exist_ok=True)
     # PDP
@@ -477,28 +484,47 @@ def collect_sku(bs, sku, out_dir, with_offers, with_reviews, delay):
                 except Exception as e:
                     print(f"[err] offers {sku}: {e}")
                     time.sleep(2)
-    # 评论（前 30 条，可排序）
+    # 评论（支持多页翻页 + 星级排序 score_asc/score_desc/usefulness_desc）
     if with_reviews:
         fpath = os.path.join(out_dir, f"reviews_{sku}.json")
         if not os.path.exists(fpath):
-            for attempt in range(3):
-                try:
-                    d = bs.fetch_page(f"/product/{sku}/reviews/?reviewsVariantMode=2&sort=usefulness_desc", delay=delay)
-                    rv = reviews_extract(d) or {}
-                    if not rv.get("reviews") and not _has_widget(d, "webListReviews"):
-                        print(f"[retry] reviews {sku} 路由回 PDP，刷新会话后重试 {attempt+1}/3")
-                        time.sleep(1)
-                        try:
-                            bs.warm()
-                        except Exception:
-                            pass
-                        continue
-                    _save(out_dir, f"reviews_{sku}.json", rv)
-                    print(f"[ok] reviews {sku}: total={rv.get('total')} 本页{len(rv.get('reviews') or [])}条")
+            all_reviews = []
+            total_rev = None
+            sort_q = f"?reviewsVariantMode=2&sort={review_sort}"
+            for p in range(1, review_pages + 1):
+                p_url = f"/product/{sku}/reviews/{sort_q}" + ("" if p == 1 else f"&page={p}")
+                got_page = False
+                for attempt in range(3):
+                    try:
+                        d = bs.fetch_page(p_url, delay=delay)
+                        rv = reviews_extract(d) or {}
+                        if not rv.get("reviews") and not _has_widget(d, "webListReviews"):
+                            print(f"[retry] reviews {sku} p{p} 路由回 PDP，刷新会话重试 {attempt+1}/3")
+                            time.sleep(1)
+                            try:
+                                bs.warm()
+                            except Exception:
+                                pass
+                            continue
+                        if total_rev is None:
+                            total_rev = rv.get("total")
+                        page_items = rv.get("reviews") or []
+                        all_reviews.extend(page_items)
+                        got_page = True
+                        if not page_items:
+                            break
+                        break
+                    except Exception as e:
+                        print(f"[err] reviews {sku} p{p}: {e}")
+                        time.sleep(2)
+                if not got_page:
                     break
-                except Exception as e:
-                    print(f"[err] reviews {sku}: {e}")
-                    time.sleep(2)
+            _save(out_dir, f"reviews_{sku}.json", {
+                "sku": sku, "sort": review_sort, "total": total_rev,
+                "fetched_pages": review_pages, "count": len(all_reviews),
+                "reviews": all_reviews
+            })
+            print(f"[ok] reviews {sku}: total={total_rev} 采集={len(all_reviews)}条 (sort={review_sort})")
 
 
 def collect_stock_batch(bs, skus, out_dir, delay):
@@ -556,6 +582,10 @@ def main():
     ap.add_argument("--seller", help="seller id 或 slug-id")
     ap.add_argument("--with-offers", action="store_true", help="同时抓同款卖家")
     ap.add_argument("--with-reviews", action="store_true", help="同时抓评论")
+    ap.add_argument("--review-sort", default="usefulness_desc",
+                    choices=["usefulness_desc", "score_desc", "score_asc"],
+                    help="评论排序（score_asc=只看差评、score_desc=只看好评）")
+    ap.add_argument("--review-pages", type=int, default=1, help="评论抓取页数（30 条/页）")
     ap.add_argument("--stock-batch", action="store_true", help="批量库存精确认证（加购→读上限）")
     ap.add_argument("--out", default="out_ozon", help="输出目录")
     ap.add_argument("--port", type=int, default=9900, help="CDP 端口")
@@ -597,7 +627,8 @@ def main():
             if args.stock_batch:
                 collect_stock_batch(bs, [sku], args.out, args.delay)
             else:
-                collect_sku(bs, sku, args.out, args.with_offers, args.with_reviews, args.delay)
+                collect_sku(bs, sku, args.out, args.with_offers, args.with_reviews, args.delay,
+                            review_sort=args.review_sort, review_pages=args.review_pages)
         print(f"\n完成。输出目录: {os.path.abspath(args.out)}")
     finally:
         bs.close()

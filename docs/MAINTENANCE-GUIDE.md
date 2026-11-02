@@ -34,16 +34,59 @@
    - 延长 Cookie 缓存 TTL 至 6 小时，减少无意义的浏览器冷启动。
 3. **沉淀全流程自动化综合采集工具 (`ozon_collector.py`)**：
    - 自动执行「CDP 预热 -> 自动解决 18+ 认证 -> 纯 HTTP 高并发搜索 -> 自动聚合 PDP 店铺与单量」全链路；
-   - 输出结构化 JSON 报表（店铺名、ID、单量徽标、数字单量、好评率、关联 SKU）。
+   - 完整合并最新**库存通道**（列表页 tile `stock_max` 100% 覆盖提取 + PDP `bigPromoPDP` 促销库存）与**评论通道**（`reviewsVariantMode=2` + 星级排序 `score_asc/score_desc/usefulness_desc` 真翻页）；
+   - 输出结构化 JSON 报表（店铺名、ID、单量徽标、数字单量、好评率、可用库存上限、评论列表、关联 SKU）。
 
 ---
 
-## 三、 日常运维与快速排障手册 (Cheatsheet)
+## 三、 最新库存与评论通道技术指南 (Inventory & Reviews Channel)
+
+### 1. 最新库存通道（100% 覆盖）
+- **列表页 Tile 直接提取 (`stock_max`)**：
+  - 核心路径：`multiButton.ozonButton.addToCart.quantityButton.maxItems`（兼容 `mainState.quantityButton.maxItems`）；
+  - 特性：**无需加购**，翻列表页直接返回全类目在售 SKU 真实库存上限（平台硬顶 2000）；
+  - 已覆盖脚本：`ozon_http.py`、`ozon_search.py`、`ozon_collector.py`、`ozon_browser.py`。
+- **详情页促销库存 (`bigPromoPDP`)**：
+  - 提取 `stockNumber`（如 `"172 шт."`）与 `counter.percentage`（已售比例，如 `81%`）；
+  - 已覆盖脚本：`ozon_detail.py`、`ozon_collector.py`、`ozon_browser.py`。
+- **购物车精确认证 (`cartSplit.quantity.maximum`)**：
+  - 走 `POST _action/addToCart` 后查验，适合重点单品可购性验证；
+  - 已覆盖脚本：`ozon_browser.py --stock-batch`。
+
+### 2. 最新评论通道（真翻页 + 星级排序）
+- **请求端点**：
+  `GET /api/entrypoint-api.bx/page/json/v2?url=/product/<sku>/reviews/?reviewsVariantMode=2&sort=<sort>&page=<page>`
+- **关键参数与能力**：
+  - `reviewsVariantMode=2`：必须携带，服务端下发完整结构化微前端响应；
+  - `sort=score_asc`：**核心差评筛选**（实测直接按 1 星在前排序，适合选品排雷与差评分析）；
+  - `sort=score_desc`：好评优先；
+  - `sort=usefulness_desc`：最有价值/点赞最多评论优先；
+  - `page=N`：真翻页无重叠（实测 P1/P2/P3 零数据重复）。
+- **字段提取**：
+  `content.score` (1-5星级)、`content.comment` (主评)、`content.positive` (优点)、`content.negative` (缺点)、`content.photos` (图集链接)、`publishedAt` (发布时间)、`author` (买家名)、`usefulness.likeCount` (有用点赞)。
+- **已覆盖脚本**：
+  - `ozon_collector.py --reviews 2 --sort score_asc`
+  - `ozon_detail.py --reviews 2 --sort score_asc`
+  - `ozon_browser.py --with-reviews --review-sort score_asc --review-pages 2`
+
+---
+
+## 四、 日常运维与快速排障手册 (Cheatsheet)
 
 ### 1. 快速执行采集
 ```bash
 # 激活 python 环境 (需安装 curl_cffi 和 websocket-client)
-python ozon_collector.py --keyword "пеньюар кружевной" --pages 2 --threads 8 --out result.json
+# 一站式采集：关键词搜索 + 批量库存 + 店铺/单量 + 差评分析
+python ozon_collector.py --keyword "пеньюар кружевной" --pages 2 --threads 8 --reviews 1 --sort score_asc --out result.json
+
+# 直接指定一批 SKU 采集详情、库存与好评
+python ozon_collector.py --sku 5081332378 --sku 5527434733 --reviews 2 --sort score_desc --out result.json
+
+# 纯 HTTP 批量类目抓取（带 stock_max 库存）
+python ozon_http.py --url "/category/igrushki-antistress-7181/?page=1" --pages 1-3 --out out_cat
+
+# 详情抓取 + 评论差评翻页
+python ozon_detail.py --skus 5081332378,5527434733 --reviews 2 --sort score_asc --out out_detail
 ```
 
 ### 2. 常见故障排查表

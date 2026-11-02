@@ -23,20 +23,14 @@ except ImportError:
     print("需要 curl_cffi:  pip3 install --user curl_cffi")
     sys.exit(1)
 
+from ozon_env import get_chrome_executable, detect_proxy
 
 CACHE = os.path.expanduser("~/.cache/ozon-search")
-CHROME_CANDIDATES = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
-]
+PROXY = detect_proxy()
 
 
 def _chrome():
-    for c in CHROME_CANDIDATES:
-        if os.path.exists(c):
-            return c
-    return None
+    return get_chrome_executable()
 
 
 def load_creds(max_age=12 * 3600):
@@ -66,10 +60,12 @@ def warm_creds(port=9970, timeout=45):
         print("[!] 需要 websocket-client：pip3 install --user websocket-client")
         return None
     prof = tempfile.mkdtemp(prefix="ozon-warm-")
-    p = subprocess.Popen([chrome, f"--remote-debugging-port={port}", f"--user-data-dir={prof}",
+    cmd = [chrome, f"--remote-debugging-port={port}", f"--user-data-dir={prof}",
         "--no-first-run", "--no-default-browser-check", "--window-size=1200,800",
-        "--window-position=-2400,-2400", "--disable-blink-features=AutomationControlled", "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        "--window-position=-2400,-2400", "--disable-blink-features=AutomationControlled", "about:blank"]
+    if PROXY:
+        cmd.append(f"--proxy-server={PROXY}")
+    p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ws = None
     try:
         for _ in range(80):
@@ -284,7 +280,8 @@ def main():
         for attempt in range(a.retry + 1):
             t0 = time.time()
             try:
-                r = pc.get(url, timeout=a.timeout) if pc else cr.get(url, headers=HEADERS, impersonate=a.impersonate, timeout=a.timeout)
+                proxies = {"http": PROXY, "https": PROXY} if PROXY else None
+                r = pc.get(url, timeout=a.timeout) if pc else cr.get(url, headers=HEADERS, impersonate=a.impersonate, timeout=a.timeout, proxies=proxies)
                 ms = int((time.time() - t0) * 1000)
                 if r.status_code != 200:
                     log({"ev": "bad", "p": n, "s": r.status_code, "a": attempt})

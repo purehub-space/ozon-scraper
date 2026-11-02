@@ -53,10 +53,12 @@ def warm_creds():
     import websocket
     port = 9980
     prof = tempfile.mkdtemp(prefix="ozon-det-")
-    p = subprocess.Popen([CHROME, f"--remote-debugging-port={port}", f"--user-data-dir={prof}",
+    cmd = [CHROME, f"--remote-debugging-port={port}", f"--user-data-dir={prof}",
         "--no-first-run", "--no-default-browser-check", "--window-size=1200,800",
-        "--window-position=-2400,-2400", "--disable-blink-features=AutomationControlled", "about:blank"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        "--window-position=-2400,-2400", "--disable-blink-features=AutomationControlled", "about:blank"]
+    if PROXY:
+        cmd.append(f"--proxy-server={PROXY}")
+    p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ws = None
     try:
         for _ in range(80):
@@ -156,6 +158,13 @@ def parse_pdp1(ws):
     if rv:
         o["rating"] = rv.get("totalScore")
         o["reviews"] = rv.get("reviewsCount")
+    sps = W(ws, "webSingleProductScore")
+    if sps and not o.get("rating"):
+        o["rating"] = sps.get("text")
+    bp = W(ws, "bigPromoPDP")
+    if bp:
+        o["promo_stock"] = (bp.get("stockNumber") or {}).get("text")
+        o["promo_sold_pct"] = (bp.get("counter") or {}).get("percentage")
     sel = W(ws, "webCurrentSeller")
     if sel:
         cell = sel.get("sellerCell") or {}
@@ -310,7 +319,8 @@ def main():
         u = API + urllib.parse.quote(path, safe="")
         for _ in range(2):
             try:
-                r = pc.get(u, timeout=45) if pc else cr.get(u, headers=H, impersonate="chrome", timeout=45)
+                proxies = {"http": PROXY, "https": PROXY} if PROXY else None
+                r = pc.get(u, timeout=45) if pc else cr.get(u, headers=H, impersonate="chrome", timeout=45, proxies=proxies)
                 if r.status_code == 403:
                     with _lock:
                         stat["r403"] += 1

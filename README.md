@@ -23,17 +23,33 @@ pip3 install --user curl_cffi websocket-client
 
 （`websocket-client` 只在需要静默预热 cookie 时用到；有现成 cookie 可以不装）
 
-## 五个脚本
+## 六个核心脚本
 
-| 脚本 | 用途 | 输入 | 吞吐 |
+| 脚本 | 用途 | 输入 | 吞吐 / 特点 |
 |---|---|---|---|
-| `ozon_http.py` | 店铺 / 类目全量列表 | seller 或 category URL | 34.5 → **193 SKU/s** |
-| `ozon_search.py` | 关键词全量（自动转类目 + 预热） | 关键词或 /search/ URL | 37.5 → **179 SKU/s** |
+| `ozon_collector.py` | **一站式综合采集**（跨平台/自动代理/18+成人过检/店铺单量/批量库存/评论排序） | 关键词 或 SKU 列表 | 端到端全自动，适合选品排雷与竞对全景 |
+| `ozon_http.py` | 店铺 / 类目全量列表（含 `stock_max`） | seller 或 category URL | 34.5 → **193 SKU/s** |
+| `ozon_search.py` | 关键词全量（自动转类目 + 预热 + `stock_max`） | 关键词或 /search/ URL | 37.5 → **179 SKU/s** |
 | `ozon_image.py` | 以图搜同款 | 本地图片 或 图片 URL | 63 → **211 SKU/s** |
-| `ozon_detail.py` | SKU 详情 + 评论 | skus.txt | 4.4 → **18.6 SKU/s** |
-| `ozon_browser.py` | 浏览器通道（额度友好） | URL/SKU/店铺/批量 | ~0.5-2 SKU/s（受浏览器会话约束） |
+| `ozon_detail.py` | SKU 详情 + 促销库存 + 评论星级翻页 | skus.txt | 4.4 → **18.6 SKU/s** |
+| `ozon_browser.py` | 浏览器通道（同源 fetch，额度友好） | URL/SKU/店铺/批量 | ~0.5-2 SKU/s（受浏览器会话约束） |
 
-（HTTP 四件套为加 `--pool 4` 的实测值，都支持 `--pool N` 和 `--browser chrome`）
+（HTTP 工具均已支持跨平台 Chrome/Edge 自动探测与代理自动挂载，支持 `--pool N` 和 `--browser chrome`）
+
+### ozon_collector.py —— 鲁棒高并发一站式综合采集器
+
+- **跨平台与网络自适应**：自动寻找 Windows/macOS/Linux 下的 Chrome / Edge，自动探测本地代理（7897/7890/环境变量）。
+- **18+ 成人类目穿透**：情趣内衣等敏感品类遭遇 `userAdultModal` 弹窗时，CDP 自动填写出生日期完成年龄核验。
+- **最新库存通道 (`stock_max`)**：搜索列表页直接提取 `quantityButton.maxItems`，无需加购覆盖 100% 商品。
+- **最新评论通道**：支持 `--reviews N` 翻页抓取，`--sort score_asc` 直接差评排雷（1 星在前）。
+
+```bash
+# 关键词搜索 + 爬取 2 页 + 店铺历史单量 + 差评分析
+python3 ozon_collector.py --keyword "пеньюар кружевной" --pages 2 --threads 8 --reviews 1 --sort score_asc --out erotic_report.json
+
+# 批量 SKU 快速核查库存与评价
+python3 ozon_collector.py --sku 5081332378 --sku 5527434733 --reviews 2 --sort score_asc --out sku_audit.json
+```
 
 ### ozon_browser.py —— 浏览器内同源 fetch（保护 cookie 额度）
 
